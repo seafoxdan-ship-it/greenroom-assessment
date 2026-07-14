@@ -527,14 +527,23 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
   const [surveys, setSurveys] = useState([])
   const [loading, setLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [adminMode, setAdminMode] = useState(false)
+  const admin = user?.email === 'seafoxdan@gmail.com'
 
   const load = async () => {
     setLoading(true)
-    try { setSurveys(await listSurveys()) } catch(e) { console.error(e) }
+    try {
+      if (adminMode && admin) {
+        const { listAllSurveys } = await import('./utils/surveyService.js')
+        setSurveys(await listAllSurveys())
+      } else {
+        setSurveys(await listSurveys())
+      }
+    } catch(e) { console.error(e) }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [adminMode])
 
   const handleDelete = async (id) => {
     try { await deleteSurveyCloud(id); await load() } catch(e) { alert('Delete failed: ' + e.message) }
@@ -554,13 +563,18 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
           <span className="header-title">Green Room <span>Energy</span></span>
         </div>
         <div className="header-actions">
+          {admin && (
+            <button className={`btn btn-sm ${adminMode ? 'btn-primary' : 'btn-ghost'}`} onClick={()=>setAdminMode(a=>!a)}>
+              {adminMode ? '👁 Admin' : '👁 Admin'}
+            </button>
+          )}
           <span style={{fontSize:11,color:'var(--text3)',fontFamily:'JetBrains Mono'}}>{user?.email}</span>
           <button className="btn btn-ghost btn-sm" onClick={handleSignOut}>Sign Out</button>
           <button className="btn btn-primary btn-sm" onClick={onNew}>+ New</button>
         </div>
       </div>
       <div className="app" style={{paddingTop:8}}>
-        <h2 className="section-heading">📋 My Assessments</h2>
+        <h2 className="section-heading">{adminMode ? '👁 All Assessments' : '📋 My Assessments'}</h2>
         {loading ? (
           <div className="empty">Loading...</div>
         ) : surveys.length === 0 ? (
@@ -577,17 +591,18 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
                 <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>{survey.site_name || 'Unnamed Assessment'}</div>
                 <div style={{fontSize:12,color:'var(--text2)',fontFamily:'JetBrains Mono'}}>
                   {survey.site_date} · {survey.issue_count || 0} issues · {new Date(survey.updated_at).toLocaleDateString()}
+                  {adminMode && <span style={{color:'var(--orange)',marginLeft:8}}>uid: {survey.user_id?.slice(0,8)}...</span>}
                   <span style={{color:'var(--green)',marginLeft:8}}>✓ Cloud</span>
                 </div>
               </div>
               <div style={{display:'flex',gap:6}} onClick={e=>e.stopPropagation()}>
                 <button className="btn btn-ghost btn-sm" onClick={()=>onOpen(survey.id)}>Open</button>
-                {confirmDelete === survey.id ? (
+                {!adminMode && (confirmDelete === survey.id ? (
                   <><button className="btn btn-danger btn-sm" onClick={()=>handleDelete(survey.id)}>Confirm</button>
                   <button className="btn btn-ghost btn-sm" onClick={()=>setConfirmDelete(null)}>Cancel</button></>
                 ) : (
                   <button className="btn btn-danger btn-sm" onClick={()=>setConfirmDelete(survey.id)}>Delete</button>
-                )}
+                ))}
               </div>
             </div>
           </div>
@@ -597,7 +612,7 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
   )
 }
 
-// ── Mode Select ───────────────────────────────────────────
+
 function ModeSelect({ onSelect, onBack }) {
   return (
     <div className="mode-screen">
