@@ -1,124 +1,211 @@
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, BorderStyle, WidthType, AlignmentType } from 'docx'
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, WidthType, BorderStyle, AlignmentType } from 'docx'
 import { saveAs } from 'file-saver'
 
-const ORANGE = '00FF6B1A'
-const GREEN = '002DD08C'
-const RED = '00FF3D54'
-const YELLOW = '00FFCA3C'
-const BLUE = '003D9EFF'
+const border = { style: BorderStyle.SINGLE, size: 1, color: '2a3540' }
+const noBorder = { style: BorderStyle.NONE, size: 0, color: 'ffffff' }
+const allBorders = { top: border, bottom: border, left: border, right: border }
+const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder }
 
-const priorityColor = (p) => {
-  if (p === 'Critical') return RED
-  if (p === 'High') return ORANGE
-  if (p === 'Medium') return YELLOW
-  return BLUE
-}
-
-const h = (text, level = HeadingLevel.HEADING_1) => new Paragraph({ text, heading: level, spacing: { before: 200, after: 100 } })
-const p = (text, opts = {}) => new Paragraph({ children: [new TextRun({ text: String(text || '—'), ...opts })], spacing: { after: 80 } })
-const label = (text) => new TextRun({ text: text.toUpperCase() + ': ', bold: true, size: 18, color: '8A9BB0' })
-const val = (text) => new TextRun({ text: String(text || '—'), size: 18 })
-
-function metaRow(k, v) {
-  return new Paragraph({ children: [label(k), val(v)], spacing: { after: 60 } })
-}
-
-function sectionHeading(text) {
+function heading(text) {
   return new Paragraph({
-    children: [new TextRun({ text, bold: true, size: 28, color: 'FF6B1A' })],
-    spacing: { before: 300, after: 120 },
-    border: { bottom: { color: 'FF6B1A', size: 6, style: BorderStyle.SINGLE } },
+    children: [new TextRun({ text, bold: true, size: 28, color: 'FF6B1A', font: 'Calibri' })],
+    spacing: { before: 320, after: 120 },
   })
 }
 
-function simpleTable(rows, headers) {
+function subheading(text) {
+  return new Paragraph({
+    children: [new TextRun({ text, bold: true, size: 22, color: '444444', font: 'Calibri' })],
+    spacing: { before: 160, after: 80 },
+  })
+}
+
+function bodyText(text, opts = {}) {
+  return new Paragraph({
+    children: [new TextRun({ text: String(text || '—'), size: 20, font: 'Calibri', ...opts })],
+    spacing: { after: 60 },
+  })
+}
+
+function twoColTable(rows) {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      ...(headers ? [new TableRow({
-        children: headers.map(h => new TableCell({
-          children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 16, color: '8A9BB0' })] })],
-          shading: { fill: '161C23' },
-          margins: { top: 60, bottom: 60, left: 80, right: 80 },
-        }))
-      })] : []),
-      ...rows.map(row => new TableRow({
-        children: row.map((cell, ci) => new TableCell({
-          children: [new Paragraph({ children: [new TextRun({ text: String(cell || '—'), size: 16, color: ci === 0 && !headers ? '8A9BB0' : 'E8EDF2' })] })],
-          shading: { fill: '0F1318' },
-          margins: { top: 60, bottom: 60, left: 80, right: 80 },
-        }))
-      }))
-    ]
+    rows: rows.map(([label, value]) => new TableRow({
+      children: [
+        new TableCell({
+          width: { size: 30, type: WidthType.PERCENTAGE },
+          borders: allBorders,
+          shading: { fill: 'F2F2F2' },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({ children: [new TextRun({ text: label, bold: true, size: 18, color: '555555', font: 'Calibri' })] })],
+        }),
+        new TableCell({
+          width: { size: 70, type: WidthType.PERCENTAGE },
+          borders: allBorders,
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({ children: [new TextRun({ text: String(value || '—'), size: 18, font: 'Calibri' })] })],
+        }),
+      ]
+    }))
   })
+}
+
+function issuesTable(issues) {
+  const headerRow = new TableRow({
+    children: ['ID','Priority','Area','Description','Recommended Fix'].map(h =>
+      new TableCell({
+        borders: allBorders,
+        shading: { fill: 'FF6B1A' },
+        margins: { top: 80, bottom: 80, left: 100, right: 100 },
+        children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 18, color: 'FFFFFF', font: 'Calibri' })] })],
+      })
+    )
+  })
+  const dataRows = issues.map(i => new TableRow({
+    children: [i.id, i.priority, i.area, i.description, i.fix || '—'].map((val, ci) =>
+      new TableCell({
+        borders: allBorders,
+        margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        children: [new Paragraph({ children: [new TextRun({
+          text: String(val || '—'),
+          size: 16,
+          font: 'Calibri',
+          color: ci === 1 ? priorityHex(i.priority) : '333333',
+          bold: ci === 1,
+        })] })],
+      })
+    )
+  }))
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [headerRow, ...dataRows],
+  })
+}
+
+function outcomesTable(outcomes) {
+  const headerRow = new TableRow({
+    children: ['Metric','Current','Proposed'].map(h =>
+      new TableCell({
+        borders: allBorders,
+        shading: { fill: 'FF6B1A' },
+        margins: { top: 80, bottom: 80, left: 120, right: 120 },
+        children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 18, color: 'FFFFFF', font: 'Calibri' })] })],
+      })
+    )
+  })
+  const dataRows = outcomes.map(o => new TableRow({
+    children: [
+      new TableCell({ borders: allBorders, margins: { top: 60, bottom: 60, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.metric || '—', size: 18, font: 'Calibri' })] })] }),
+      new TableCell({ borders: allBorders, margins: { top: 60, bottom: 60, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.current || '—', size: 18, font: 'Calibri' })] })] }),
+      new TableCell({ borders: allBorders, shading: { fill: 'E8F8F2' }, margins: { top: 60, bottom: 60, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.proposed || '—', size: 18, font: 'Calibri', color: '1a7a52', bold: true })] })] }),
+    ]
+  }))
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [headerRow, ...dataRows],
+  })
+}
+
+function priorityHex(p) {
+  if (p === 'Critical') return 'CC0000'
+  if (p === 'High') return 'CC5500'
+  if (p === 'Medium') return '997700'
+  return '0055AA'
 }
 
 export async function exportToDocx(data) {
-  const sections = []
+  const children = []
 
-  // Cover / meta
-  sections.push(
-    new Paragraph({
-      children: [new TextRun({ text: 'GREEN ROOM ENERGY', bold: true, size: 48, color: 'FF6B1A' })],
-      spacing: { after: 60 },
-    }),
-    new Paragraph({
-      children: [new TextRun({ text: 'Off-Grid Solar Site Assessment', size: 28, color: 'E8EDF2' })],
-      spacing: { after: 300 },
-    }),
-    metaRow('Site', data.site.name),
-    metaRow('Address', data.site.address),
-    metaRow('Date', data.site.date),
-    metaRow('Prepared By', data.site.preparedBy),
-    metaRow('Client', data.site.client),
-    metaRow('Phone', data.site.phone),
-    metaRow('Email', data.site.email),
+  // Cover
+  children.push(
+    new Paragraph({ children: [new TextRun({ text: 'GREEN ROOM ENERGY', bold: true, size: 56, color: 'FF6B1A', font: 'Calibri' })], spacing: { after: 80 } }),
+    new Paragraph({ children: [new TextRun({ text: 'Off-Grid Solar Site Assessment Report', size: 28, color: '666666', font: 'Calibri' })], spacing: { after: 400 } }),
   )
 
+  // Site details
+  children.push(heading('Site Details'))
+  children.push(twoColTable([
+    ['Site / Property', data.site.name],
+    ['Address', data.site.address],
+    ['Date', data.site.date],
+    ['Prepared By', data.site.preparedBy],
+    ['Client', data.site.client],
+    ['Phone', data.site.phone],
+    ['Email', data.site.email],
+  ]))
+
   // System Overview
-  sections.push(sectionHeading('System Overview'))
-  sections.push(simpleTable([
-    ['Inverter Make', data.inverter.make, 'Inverter Model', data.inverter.model],
-    ['Rated kW', data.inverter.kw, 'Serial No.', data.inverter.serial],
-    ['Battery Chemistry', data.battery.chemistry, 'Battery Make/Model', `${data.battery.make} ${data.battery.model}`.trim()],
-    ['Battery Voltage', data.battery.voltage ? data.battery.voltage+'V' : '', 'Capacity', data.battery.ah ? data.battery.ah+'Ah' : ''],
-    ['Solar Panels', data.solar.panels, 'Panel Wattage', data.solar.wattage ? data.solar.wattage+'W' : ''],
-    ['Total kWp', data.solar.kwp, 'Orientation', data.solar.orientation],
-    ['Generator Make', data.generator.make, 'Generator kVA', data.generator.kva],
-    ['Fuel Type', data.generator.fuel, 'Hours on Meter', data.generator.hours],
+  children.push(heading('System Overview'))
+
+  children.push(subheading('Inverter / Charger'))
+  children.push(twoColTable([
+    ['Make', data.inverter.make],
+    ['Model', data.inverter.model],
+    ['Rated kW', data.inverter.kw],
+    ['Serial No.', data.inverter.serial],
+    ['Firmware', data.inverter.firmware],
+  ]))
+
+  children.push(subheading('Battery Bank'))
+  children.push(twoColTable([
+    ['Chemistry', data.battery.chemistry],
+    ['Make', data.battery.make],
+    ['Model', data.battery.model],
+    ['Voltage', data.battery.voltage ? data.battery.voltage + 'V' : ''],
+    ['Capacity', data.battery.ah ? data.battery.ah + 'Ah' : ''],
+    ['Configuration', data.battery.config],
+    ['Age', data.battery.age ? data.battery.age + ' years' : ''],
+  ]))
+
+  children.push(subheading('Solar Array'))
+  children.push(twoColTable([
+    ['No. of Panels', data.solar.panels],
+    ['Panel Wattage', data.solar.wattage ? data.solar.wattage + 'W' : ''],
+    ['No. of Strings', data.solar.strings],
+    ['Total kWp', data.solar.kwp],
+    ['Orientation', data.solar.orientation],
+    ['Age', data.solar.age ? data.solar.age + ' years' : ''],
+    ['Shading', data.solar.shading],
+  ]))
+
+  children.push(subheading('Generator'))
+  children.push(twoColTable([
+    ['Make', data.generator.make],
+    ['Model', data.generator.model],
+    ['Rated kVA', data.generator.kva],
+    ['Fuel Type', data.generator.fuel],
+    ['Hours on Meter', data.generator.hours],
+    ['Last Service', data.generator.lastService],
   ]))
 
   // Issues
-  sections.push(sectionHeading('Issues Register'))
+  children.push(heading('Issues Register'))
   if (data.issues.length === 0) {
-    sections.push(p('No issues recorded.'))
+    children.push(bodyText('No issues recorded.'))
   } else {
-    sections.push(simpleTable(
-      data.issues.map(i => [i.id, i.priority, i.area, i.description, i.fix || '—']),
-      ['ID', 'Priority', 'Area', 'Description', 'Fix']
-    ))
+    children.push(issuesTable(data.issues))
   }
 
   // Remediation Plan
-  sections.push(sectionHeading('Remediation Plan'))
+  children.push(heading('Remediation Plan'))
   const phases = [
     { label: 'Phase 1 — Immediate (Critical)', items: data.issues.filter(i=>i.priority==='Critical') },
     { label: 'Phase 2 — Short Term (High)', items: data.issues.filter(i=>i.priority==='High') },
-    { label: 'Phase 3 — Scheduled (Medium/Low)', items: [...data.issues.filter(i=>i.priority==='Medium'), ...data.issues.filter(i=>i.priority==='Low')] },
+    { label: 'Phase 3 — Scheduled (Medium / Low)', items: [...data.issues.filter(i=>i.priority==='Medium'), ...data.issues.filter(i=>i.priority==='Low')] },
   ]
   phases.forEach(phase => {
-    sections.push(new Paragraph({ children: [new TextRun({ text: phase.label, bold: true, size: 22, color: 'FF6B1A' })], spacing: { before: 160, after: 80 } }))
+    children.push(subheading(phase.label))
     if (phase.items.length === 0) {
-      sections.push(p('No issues at this priority level.', { color: '8A9BB0' }))
+      children.push(bodyText('No issues at this priority level.', { color: '999999' }))
     } else {
       phase.items.forEach(i => {
-        sections.push(new Paragraph({
-          children: [new TextRun({ text: `${i.id} — ${i.description}`, size: 18 })],
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `${i.id} — ${i.description}`, size: 18, font: 'Calibri' })],
           bullet: { level: 0 },
           spacing: { after: 40 },
         }))
-        if (i.fix) sections.push(new Paragraph({
-          children: [new TextRun({ text: `→ ${i.fix}`, size: 16, color: '8A9BB0' })],
+        if (i.fix) children.push(new Paragraph({
+          children: [new TextRun({ text: `Fix: ${i.fix}`, size: 16, color: '666666', font: 'Calibri' })],
           bullet: { level: 1 },
           spacing: { after: 40 },
         }))
@@ -126,29 +213,35 @@ export async function exportToDocx(data) {
     }
   })
   if (data.remediation.notes) {
-    sections.push(new Paragraph({ children: [new TextRun({ text: 'Additional Notes', bold: true, size: 20 })], spacing: { before: 120, after: 60 } }))
-    sections.push(p(data.remediation.notes))
+    children.push(subheading('Additional Notes'))
+    children.push(bodyText(data.remediation.notes))
+  }
+  if (data.remediation.timeline) {
+    children.push(bodyText('Estimated Timeline: ' + data.remediation.timeline, { bold: true }))
   }
 
   // Expected Outcomes
-  sections.push(sectionHeading('Expected Outcomes'))
-  sections.push(simpleTable(
-    data.outcomes.map(o => [o.metric, o.current || '—', o.proposed || '—']),
-    ['Metric', 'Current', 'Proposed']
-  ))
+  children.push(heading('Expected Outcomes'))
+  children.push(outcomesTable(data.outcomes))
 
   // Dashboard Integration
-  sections.push(sectionHeading('Dashboard Integration'))
-  sections.push(simpleTable([
+  children.push(heading('Dashboard Integration'))
+  children.push(twoColTable([
     ['MQTT Broker', data.dashboard.mqtt],
     ['Remote Access URL', data.dashboard.url],
     ['Solar Assistant Version', data.dashboard.saVersion],
     ['ESP32 Nodes', data.dashboard.esp32Nodes],
     ['Integration Scope', data.dashboard.scope],
   ]))
-  if (data.dashboard.notes) sections.push(p(data.dashboard.notes))
+  if (data.dashboard.notes) children.push(bodyText(data.dashboard.notes))
 
-  const doc = new Document({ sections: [{ children: sections }] })
+  const doc = new Document({
+    sections: [{
+      properties: { page: { margin: { top: 720, bottom: 720, left: 900, right: 900 } } },
+      children,
+    }]
+  })
+
   const blob = await Packer.toBlob(doc)
   const filename = `GR-Assessment-${(data.site.name||'Site').replace(/\s+/g,'-')}-${data.site.date||'date'}.docx`
   saveAs(blob, filename)
