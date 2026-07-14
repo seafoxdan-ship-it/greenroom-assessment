@@ -1,7 +1,8 @@
 import { exportToPDF } from './utils/pdfExport.js'
 import { exportToDocx } from './utils/docxExport.js'
-import { saveToDrive, loadFromDrive, listDriveAssessments } from './utils/driveApi.js'
+import { listSurveys, getSurvey, saveSurveyCloud, deleteSurveyCloud, signOut, onAuthChange, getSession } from './utils/surveyService.js'
 import { useState, useEffect, useCallback, useRef } from 'react'
+import AuthScreen from './AuthScreen.jsx'
 
 const AREAS = ['Inverter','Battery','Solar Array','Generator','Wiring','Distribution','Monitoring','Structure','Other']
 const PRIORITIES = ['Critical','High','Medium','Low']
@@ -13,7 +14,6 @@ const PAIN_POINTS = [
 ]
 const SECTIONS = ['Site Details','System Overview','Issues Register','Photo Documentation','Remediation Plan','Expected Outcomes','Dashboard Integration']
 const TODAY = new Date().toISOString().slice(0,10)
-const INDEX_KEY = 'gr-survey-index'
 
 function newData() {
   return {
@@ -36,13 +36,6 @@ function newData() {
     dashboard: { mqtt:'', url:'', saVersion:'', esp32Nodes:'', scope:'', notes:'' },
   }
 }
-
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
-function getIndex() { try { return JSON.parse(localStorage.getItem(INDEX_KEY)) || [] } catch { return [] } }
-function saveIndex(idx) { localStorage.setItem(INDEX_KEY, JSON.stringify(idx)) }
-function loadSurvey(id) { try { return JSON.parse(localStorage.getItem('gr-survey-' + id)) } catch { return null } }
-function saveSurvey(id, data) { localStorage.setItem('gr-survey-' + id, JSON.stringify(data)) }
-function deleteSurvey(id) { localStorage.removeItem('gr-survey-' + id); saveIndex(getIndex().filter(s => s.id !== id)) }
 
 function deepSet(obj, path, value) {
   const keys = path.split('.')
@@ -91,7 +84,6 @@ const Badge = ({ priority }) => <span className={`badge badge-${priority.toLower
 const Divider = () => <div className="divider" />
 const Empty = ({ msg }) => <div className="empty">{msg}</div>
 
-// ── GPS Button ────────────────────────────────────────────
 function GPSButton({ onCapture }) {
   const [status, setStatus] = useState('')
   const capture = async () => {
@@ -114,7 +106,6 @@ function GPSButton({ onCapture }) {
   )
 }
 
-// ── Compass / Tilt ────────────────────────────────────────
 function CompassCapture({ onCapture }) {
   const [heading, setHeading] = useState(null)
   const [enabled, setEnabled] = useState(false)
@@ -147,11 +138,7 @@ function CompassCapture({ onCapture }) {
     return () => window.removeEventListener('deviceorientation', handler, true)
   }, [enabled, locked])
 
-  const lock = () => {
-    setLocked(true)
-    if (headingRef.current !== null) onCapture(headingRef.current)
-  }
-
+  const lock = () => { setLocked(true); if (headingRef.current !== null) onCapture(headingRef.current) }
   const reset = () => { setLocked(false); setHeading(null) }
 
   return (
@@ -171,9 +158,7 @@ function CompassCapture({ onCapture }) {
           <div style={{fontSize:28,fontWeight:700,color:'var(--yellow)',fontFamily:'JetBrains Mono',minWidth:60}}>
             {heading !== null ? `${heading}°` : '---'}
           </div>
-          <div style={{fontSize:14,color:'var(--text2)',minWidth:40}}>
-            {heading !== null ? degreesToCardinal(heading) : ''}
-          </div>
+          <div style={{fontSize:14,color:'var(--text2)',minWidth:40}}>{heading !== null ? degreesToCardinal(heading) : ''}</div>
           <button className="btn btn-primary btn-sm" onClick={lock} disabled={heading === null}>🔒 Lock</button>
         </div>
       )}
@@ -203,21 +188,13 @@ function TiltCapture({ onCapture }) {
   useEffect(() => {
     if (!enabled || locked) return
     const handler = (e) => {
-      if (e.beta !== null) {
-        const t = Math.round(Math.abs(e.beta))
-        tiltRef.current = t
-        setTilt(t)
-      }
+      if (e.beta !== null) { tiltRef.current = Math.round(Math.abs(e.beta)); setTilt(Math.round(Math.abs(e.beta))) }
     }
     window.addEventListener('deviceorientation', handler, true)
     return () => window.removeEventListener('deviceorientation', handler, true)
   }, [enabled, locked])
 
-  const lock = () => {
-    setLocked(true)
-    if (tiltRef.current !== null) onCapture(tiltRef.current)
-  }
-
+  const lock = () => { setLocked(true); if (tiltRef.current !== null) onCapture(tiltRef.current) }
   const reset = () => { setLocked(false); setTilt(null) }
 
   return (
@@ -244,7 +221,7 @@ function TiltCapture({ onCapture }) {
   )
 }
 
-// ── Section: Site Details ─────────────────────────────────
+// ── Sections ──────────────────────────────────────────────
 function SiteDetails({ data, patch }) {
   return (
     <>
@@ -260,23 +237,14 @@ function SiteDetails({ data, patch }) {
         </div>
         <div style={{marginTop:12}}>
           <F label="Address" path="site.address" data={data} patch={patch} />
-          <GPSButton onCapture={({ lat, lng, address }) => {
-            patch('site.lat', lat)
-            patch('site.lng', lng)
-            patch('site.address', address)
-          }} />
-          {data.site.lat && (
-            <div style={{fontSize:11,fontFamily:'JetBrains Mono',color:'var(--text3)',marginTop:4}}>
-              {data.site.lat}, {data.site.lng}
-            </div>
-          )}
+          <GPSButton onCapture={({ lat, lng, address }) => { patch('site.lat', lat); patch('site.lng', lng); patch('site.address', address) }} />
+          {data.site.lat && <div style={{fontSize:11,fontFamily:'JetBrains Mono',color:'var(--text3)',marginTop:4}}>{data.site.lat}, {data.site.lng}</div>}
         </div>
       </div>
     </>
   )
 }
 
-// ── Section: System Overview ──────────────────────────────
 function SystemOverview({ data, patch }) {
   return (
     <>
@@ -344,7 +312,6 @@ function SystemOverview({ data, patch }) {
   )
 }
 
-// ── Section: Issues Register ──────────────────────────────
 function IssuesRegister({ data, setData }) {
   const [filter, setFilter] = useState('All')
   const [editId, setEditId] = useState(null)
@@ -377,44 +344,27 @@ function IssuesRegister({ data, setData }) {
           {['All',...PRIORITIES].map(p => {
             const count = p==='All' ? issues.length : counts[p]
             const cls = p==='All' ? '' : `badge-${p.toLowerCase()}`
-            return (
-              <div key={p} className={`stat-chip ${cls} ${filter===p?'active':''}`} onClick={()=>setFilter(p)}>
-                <span>{p}</span><strong>{count}</strong>
-              </div>
-            )
+            return <div key={p} className={`stat-chip ${cls} ${filter===p?'active':''}`} onClick={()=>setFilter(p)}><span>{p}</span><strong>{count}</strong></div>
           })}
         </div>
         <div className="card" style={{background:'var(--surface2)'}}>
           <div className="card-title">+ {editId ? 'Edit' : 'Add'} Issue</div>
           <div className="grid-2" style={{marginBottom:8}}>
-            <div className="field"><label>Priority</label>
-              <select value={form.priority} onChange={e=>sf('priority',e.target.value)}>{PRIORITIES.map(p=><option key={p}>{p}</option>)}</select>
-            </div>
-            <div className="field"><label>Area</label>
-              <select value={form.area} onChange={e=>sf('area',e.target.value)}>{AREAS.map(a=><option key={a}>{a}</option>)}</select>
-            </div>
+            <div className="field"><label>Priority</label><select value={form.priority} onChange={e=>sf('priority',e.target.value)}>{PRIORITIES.map(p=><option key={p}>{p}</option>)}</select></div>
+            <div className="field"><label>Area</label><select value={form.area} onChange={e=>sf('area',e.target.value)}>{AREAS.map(a=><option key={a}>{a}</option>)}</select></div>
           </div>
-          <div className="field" style={{marginBottom:8}}><label>Description</label>
-            <textarea rows={2} value={form.description} onChange={e=>sf('description',e.target.value)} placeholder="What is the issue?" />
-          </div>
-          <div className="field" style={{marginBottom:8}}><label>Recommended Fix</label>
-            <textarea rows={2} value={form.fix} onChange={e=>sf('fix',e.target.value)} placeholder="What needs to be done?" />
-          </div>
-          <div className="field" style={{marginBottom:12}}><label>Green Room Solution</label>
-            <textarea rows={2} value={form.grSolution} onChange={e=>sf('grSolution',e.target.value)} placeholder="How GR Energy solves this..." />
-          </div>
+          <div className="field" style={{marginBottom:8}}><label>Description</label><textarea rows={2} value={form.description} onChange={e=>sf('description',e.target.value)} placeholder="What is the issue?" /></div>
+          <div className="field" style={{marginBottom:8}}><label>Recommended Fix</label><textarea rows={2} value={form.fix} onChange={e=>sf('fix',e.target.value)} placeholder="What needs to be done?" /></div>
+          <div className="field" style={{marginBottom:12}}><label>Green Room Solution</label><textarea rows={2} value={form.grSolution} onChange={e=>sf('grSolution',e.target.value)} placeholder="How GR Energy solves this..." /></div>
           <div style={{display:'flex',gap:8}}>
-            {editId ? (
-              <><button className="btn btn-primary" onClick={saveEdit}>Save Changes</button>
-              <button className="btn btn-ghost" onClick={()=>{setEditId(null);resetForm()}}>Cancel</button></>
-            ) : <button className="btn btn-primary" onClick={addIssue}>Add Issue</button>}
+            {editId ? <><button className="btn btn-primary" onClick={saveEdit}>Save Changes</button><button className="btn btn-ghost" onClick={()=>{setEditId(null);resetForm()}}>Cancel</button></>
+            : <button className="btn btn-primary" onClick={addIssue}>Add Issue</button>}
           </div>
         </div>
         {filtered.length === 0 ? <Empty msg="No issues recorded yet" /> : filtered.map(issue => (
           <div key={issue.id} className={`issue-card ${issue.priority.toLowerCase()}`}>
             <div className="issue-header">
-              <span className="issue-id">{issue.id}</span>
-              <Badge priority={issue.priority} />
+              <span className="issue-id">{issue.id}</span><Badge priority={issue.priority} />
               <span style={{fontSize:12,color:'var(--text2)'}}>{issue.area}</span>
               <div style={{marginLeft:'auto',display:'flex',gap:6}}>
                 <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(issue)}>Edit</button>
@@ -431,15 +381,12 @@ function IssuesRegister({ data, setData }) {
   )
 }
 
-// ── Section: Photo Documentation ──────────────────────────
 function PhotoCapture({ data, setData }) {
   const addPhoto = (e) => {
     const files = Array.from(e.target.files)
     files.forEach(file => {
       const reader = new FileReader()
-      reader.onload = ev => {
-        setData(d => ({ ...d, photos: [...d.photos, { id: Date.now()+Math.random(), src: ev.target.result, caption:'', area:'General' }] }))
-      }
+      reader.onload = ev => setData(d => ({ ...d, photos: [...d.photos, { id: Date.now()+Math.random(), src: ev.target.result, caption:'', area:'General' }] }))
       reader.readAsDataURL(file)
     })
   }
@@ -459,9 +406,7 @@ function PhotoCapture({ data, setData }) {
               <div key={photo.id} className="photo-item">
                 <img src={photo.src} alt={photo.caption} />
                 <input type="text" value={photo.caption} onChange={e => updatePhoto(photo.id, 'caption', e.target.value)} placeholder="Caption..." style={{marginTop:4,fontSize:12}} />
-                <select value={photo.area} onChange={e => updatePhoto(photo.id, 'area', e.target.value)} style={{marginTop:4,fontSize:12}}>
-                  {AREAS.map(a => <option key={a}>{a}</option>)}
-                </select>
+                <select value={photo.area} onChange={e => updatePhoto(photo.id, 'area', e.target.value)} style={{marginTop:4,fontSize:12}}>{AREAS.map(a => <option key={a}>{a}</option>)}</select>
                 <button className="btn btn-danger btn-sm" style={{marginTop:4,width:'100%'}} onClick={()=>removePhoto(photo.id)}>Remove</button>
               </div>
             ))}
@@ -472,7 +417,6 @@ function PhotoCapture({ data, setData }) {
   )
 }
 
-// ── Section: Remediation Plan ─────────────────────────────
 function RemediationPlan({ data, patch }) {
   const byPriority = (p) => data.issues.filter(i => i.priority === p)
   const phases = [
@@ -487,15 +431,13 @@ function RemediationPlan({ data, patch }) {
         {phases.map(phase => (
           <div key={phase.label} className={`phase-card ${phase.cls}`}>
             <div className="phase-title">{phase.label}</div>
-            {phase.items.length === 0
-              ? <div style={{fontSize:13,color:'var(--text3)'}}>No issues at this priority level</div>
-              : phase.items.map(issue => (
-                <div key={issue.id} style={{marginBottom:8,fontSize:14}}>
-                  <strong>{issue.id}</strong> — {issue.description}
-                  {issue.fix && <div style={{fontSize:13,color:'var(--text2)',marginLeft:8}}>→ {issue.fix}</div>}
-                </div>
-              ))
-            }
+            {phase.items.length === 0 ? <div style={{fontSize:13,color:'var(--text3)'}}>No issues at this priority level</div>
+            : phase.items.map(issue => (
+              <div key={issue.id} style={{marginBottom:8,fontSize:14}}>
+                <strong>{issue.id}</strong> — {issue.description}
+                {issue.fix && <div style={{fontSize:13,color:'var(--text2)',marginLeft:8}}>→ {issue.fix}</div>}
+              </div>
+            ))}
           </div>
         ))}
         <Divider />
@@ -506,11 +448,8 @@ function RemediationPlan({ data, patch }) {
   )
 }
 
-// ── Section: Expected Outcomes ────────────────────────────
 function ExpectedOutcomes({ data, setData }) {
-  const update = (i, key, val) => {
-    setData(d => { const outcomes = [...d.outcomes]; outcomes[i] = { ...outcomes[i], [key]: val }; return { ...d, outcomes } })
-  }
+  const update = (i, key, val) => setData(d => { const outcomes = [...d.outcomes]; outcomes[i] = { ...outcomes[i], [key]: val }; return { ...d, outcomes } })
   const addRow = () => setData(d => ({ ...d, outcomes: [...d.outcomes, { metric:'', current:'', proposed:'' }] }))
   return (
     <>
@@ -534,7 +473,6 @@ function ExpectedOutcomes({ data, setData }) {
   )
 }
 
-// ── Section: Dashboard Integration ───────────────────────
 function DashboardIntegration({ data, patch }) {
   return (
     <>
@@ -553,23 +491,15 @@ function DashboardIntegration({ data, patch }) {
   )
 }
 
-// ── Export Modal ──────────────────────────────────────────
 function ExportModal({ data, onClose }) {
   const [status, setStatus] = useState('')
   const exportPDF = async () => {
     setStatus('Generating PDF...')
-    try { await exportToPDF(data); setStatus('PDF downloaded!') }
-    catch(e) { setStatus('PDF error: ' + e.message) }
+    try { await exportToPDF(data); setStatus('PDF downloaded!') } catch(e) { setStatus('PDF error: ' + e.message) }
   }
   const exportDocx = async () => {
     setStatus('Generating DOCX...')
-    try { await exportToDocx(data); setStatus('DOCX downloaded!') }
-    catch(e) { setStatus('DOCX error: ' + e.message) }
-  }
-  const saveDrive = async () => {
-    setStatus('Saving to Google Drive...')
-    try { await saveToDrive(data); setStatus('Saved to Google Drive!') }
-    catch(e) { setStatus('Drive error: ' + e.message) }
+    try { await exportToDocx(data); setStatus('DOCX downloaded!') } catch(e) { setStatus('DOCX error: ' + e.message) }
   }
   return (
     <div className="modal-overlay" onClick={e => e.target===e.currentTarget && onClose()}>
@@ -585,10 +515,6 @@ function ExportModal({ data, onClose }) {
             <span className="export-btn-icon">📝</span>
             <div className="export-btn-text"><strong>Word Document</strong><span>Editable .docx file</span></div>
           </button>
-          <button className="export-btn" onClick={saveDrive}>
-            <span className="export-btn-icon">☁️</span>
-            <div className="export-btn-text"><strong>Save to Google Drive</strong><span>Sync assessment data</span></div>
-          </button>
         </div>
         <button className="btn btn-ghost" style={{marginTop:16,width:'100%'}} onClick={onClose}>Close</button>
       </div>
@@ -597,36 +523,25 @@ function ExportModal({ data, onClose }) {
 }
 
 // ── My Assessments Screen ─────────────────────────────────
-function AssessmentsScreen({ onNew, onOpen }) {
+function AssessmentsScreen({ onNew, onOpen, user }) {
   const [surveys, setSurveys] = useState([])
-  const [driveStatus, setDriveStatus] = useState('')
+  const [loading, setLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState(null)
 
-  useEffect(() => { setSurveys(getIndex()) }, [])
-
-  const handleDelete = (id) => { deleteSurvey(id); setSurveys(getIndex()); setConfirmDelete(null) }
-
-  const loadFromDriveAll = async () => {
-    setDriveStatus('Connecting to Drive...')
-    try {
-      const files = await listDriveAssessments()
-      if (files.length === 0) { setDriveStatus('No assessments found on Drive'); return }
-      let imported = 0
-      for (const file of files) {
-        const existing = getIndex().find(s => s.driveId === file.id)
-        if (!existing) {
-          const data = await loadFromDrive(file.id)
-          const id = uid()
-          const meta = { id, name: data.site?.name || file.name, date: data.site?.date || TODAY, lastModified: file.modifiedTime, driveId: file.id, synced: true }
-          saveSurvey(id, data)
-          saveIndex([...getIndex(), meta])
-          imported++
-        }
-      }
-      setSurveys(getIndex())
-      setDriveStatus(imported > 0 ? `Imported ${imported} survey(s) from Drive` : 'Already up to date')
-    } catch(e) { setDriveStatus('Drive error: ' + e.message) }
+  const load = async () => {
+    setLoading(true)
+    try { setSurveys(await listSurveys()) } catch(e) { console.error(e) }
+    setLoading(false)
   }
+
+  useEffect(() => { load() }, [])
+
+  const handleDelete = async (id) => {
+    try { await deleteSurveyCloud(id); await load() } catch(e) { alert('Delete failed: ' + e.message) }
+    setConfirmDelete(null)
+  }
+
+  const handleSignOut = async () => { await signOut() }
 
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
@@ -639,28 +554,30 @@ function AssessmentsScreen({ onNew, onOpen }) {
           <span className="header-title">Green Room <span>Energy</span></span>
         </div>
         <div className="header-actions">
-          <button className="btn btn-ghost btn-sm" onClick={loadFromDriveAll}>☁️ Load from Drive</button>
+          <span style={{fontSize:11,color:'var(--text3)',fontFamily:'JetBrains Mono'}}>{user?.email}</span>
+          <button className="btn btn-ghost btn-sm" onClick={handleSignOut}>Sign Out</button>
           <button className="btn btn-primary btn-sm" onClick={onNew}>+ New</button>
         </div>
       </div>
       <div className="app" style={{paddingTop:8}}>
         <h2 className="section-heading">📋 My Assessments</h2>
-        {driveStatus && <div style={{marginBottom:12,fontSize:13,color:'var(--green)',padding:'8px 12px',background:'var(--surface)',borderRadius:6}}>{driveStatus}</div>}
-        {surveys.length === 0 ? (
+        {loading ? (
+          <div className="empty">Loading...</div>
+        ) : surveys.length === 0 ? (
           <div className="card" style={{textAlign:'center',padding:48}}>
             <div style={{fontSize:48,marginBottom:16}}>📋</div>
             <div style={{fontSize:18,fontFamily:'Barlow Condensed',fontWeight:700,marginBottom:8}}>No assessments yet</div>
-            <div style={{color:'var(--text2)',marginBottom:24}}>Start a new site assessment or load from Google Drive</div>
+            <div style={{color:'var(--text2)',marginBottom:24}}>Start your first site assessment</div>
             <button className="btn btn-primary" onClick={onNew}>+ New Assessment</button>
           </div>
-        ) : surveys.slice().reverse().map(survey => (
-          <div key={survey.id} className="card" style={{cursor:'pointer',borderColor: survey.synced ? 'var(--green-dim)' : 'var(--border)'}} onClick={() => onOpen(survey.id)}>
+        ) : surveys.map(survey => (
+          <div key={survey.id} className="card" style={{cursor:'pointer'}} onClick={() => onOpen(survey.id)}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{flex:1}}>
-                <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>{survey.name || 'Unnamed Assessment'}</div>
+                <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>{survey.site_name || 'Unnamed Assessment'}</div>
                 <div style={{fontSize:12,color:'var(--text2)',fontFamily:'JetBrains Mono'}}>
-                  {survey.date} · {survey.issueCount || 0} issues
-                  {survey.synced && <span style={{color:'var(--green)',marginLeft:8}}>✓ Drive</span>}
+                  {survey.site_date} · {survey.issue_count || 0} issues · {new Date(survey.updated_at).toLocaleDateString()}
+                  <span style={{color:'var(--green)',marginLeft:8}}>✓ Cloud</span>
                 </div>
               </div>
               <div style={{display:'flex',gap:6}} onClick={e=>e.stopPropagation()}>
@@ -693,27 +610,19 @@ function ModeSelect({ onSelect, onBack }) {
         <p>Off-Grid Solar Site Assessment</p>
       </div>
       <div className="mode-cards">
-        <div className="mode-card" onClick={()=>onSelect('tech')}>
-          <div className="icon">🔧</div><h2>Technician</h2><p>Full site assessment & documentation</p>
-        </div>
-        <div className="mode-card" onClick={()=>onSelect('client')}>
-          <div className="icon">🌿</div><h2>Client</h2><p>Quick enquiry & pain point survey</p>
-        </div>
+        <div className="mode-card" onClick={()=>onSelect('tech')}><div className="icon">🔧</div><h2>Technician</h2><p>Full site assessment & documentation</p></div>
+        <div className="mode-card" onClick={()=>onSelect('client')}><div className="icon">🌿</div><h2>Client</h2><p>Quick enquiry & pain point survey</p></div>
       </div>
       <button className="btn btn-ghost btn-sm" style={{marginTop:16}} onClick={onBack}>← Back</button>
     </div>
   )
 }
 
-// ── Client Questionnaire ──────────────────────────────────
 function ClientQuestionnaire({ onBack }) {
   const [form, setForm] = useState({ painPoints:[], generatorHrs:'', fuelCost:'', systemAge:'', location:'', name:'', phone:'', email:'', notes:'' })
   const [submitted, setSubmitted] = useState(false)
   const togglePain = (p) => setForm(f => ({ ...f, painPoints: f.painPoints.includes(p) ? f.painPoints.filter(x=>x!==p) : [...f.painPoints, p] }))
-  const submit = () => {
-    if (!form.name || !form.phone) { alert('Please enter your name and phone number'); return }
-    setSubmitted(true)
-  }
+  const submit = () => { if (!form.name || !form.phone) { alert('Please enter your name and phone number'); return }; setSubmitted(true) }
   if (submitted) return (
     <div className="mode-screen">
       <div className="mode-logo">
@@ -769,6 +678,7 @@ function ClientQuestionnaire({ onBack }) {
 
 // ── Main App ──────────────────────────────────────────────
 export default function App() {
+  const [session, setSession] = useState(undefined) // undefined = loading
   const [screen, setScreen] = useState('home')
   const [activeSurveyId, setActiveSurveyId] = useState(null)
   const [section, setSection] = useState(0)
@@ -777,59 +687,41 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState('')
 
   useEffect(() => {
-    if (screen !== 'tech' || !activeSurveyId) return
-    const timer = setTimeout(() => {
-      saveSurvey(activeSurveyId, data)
-      const idx = getIndex()
-      const existing = idx.find(s => s.id === activeSurveyId)
-      if (existing) {
-        existing.name = data.site.name || 'Unnamed Assessment'
-        existing.date = data.site.date || TODAY
-        existing.issueCount = data.issues.length
-        existing.lastModified = new Date().toISOString()
-        existing.synced = false
-        saveIndex(idx)
-      }
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus(''), 2000)
-    }, 1000)
-    return () => clearTimeout(timer)
-  }, [data, screen, activeSurveyId])
-
-  const patch = useCallback((path, value) => {
-    setData(d => deepSet(d, path, value))
+    getSession().then(s => setSession(s))
+    const { data: { subscription } } = onAuthChange(s => setSession(s))
+    return () => subscription.unsubscribe()
   }, [])
 
-  const startNew = () => setScreen('modeselect')
+  // Auto-save to Supabase
+  useEffect(() => {
+    if (screen !== 'tech' || !session) return
+    const timer = setTimeout(async () => {
+      try {
+        setSaveStatus('saving...')
+        const id = await saveSurveyCloud(activeSurveyId, data)
+        if (!activeSurveyId) setActiveSurveyId(id)
+        setSaveStatus('✓ Saved')
+        setTimeout(() => setSaveStatus(''), 2000)
+      } catch(e) { setSaveStatus('Save failed') }
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [data, screen, session])
 
-  const openSurvey = (id) => {
-    const d = loadSurvey(id)
-    if (d) { setData(d); setActiveSurveyId(id); setSection(0); setScreen('tech') }
+  const patch = useCallback((path, value) => setData(d => deepSet(d, path, value)), [])
+
+  const openSurvey = async (id) => {
+    try {
+      const d = await getSurvey(id)
+      setData(d); setActiveSurveyId(id); setSection(0); setScreen('tech')
+    } catch(e) { alert('Could not load survey') }
   }
 
   const handleModeSelect = (mode) => {
     if (mode === 'tech') {
-      const id = uid()
-      const d = newData()
-      const meta = { id, name: 'Unnamed Assessment', date: TODAY, issueCount: 0, lastModified: new Date().toISOString(), synced: false }
-      saveSurvey(id, d)
-      saveIndex([...getIndex(), meta])
-      setData(d); setActiveSurveyId(id); setSection(0); setScreen('tech')
+      setData(newData()); setActiveSurveyId(null); setSection(0); setScreen('tech')
     } else {
       setScreen('client')
     }
-  }
-
-  const saveToDriveNow = async () => {
-    setSaveStatus('Syncing...')
-    try {
-      const fileId = await saveToDrive(data)
-      const idx = getIndex()
-      const s = idx.find(x => x.id === activeSurveyId)
-      if (s) { s.synced = true; s.driveId = fileId; saveIndex(idx) }
-      setSaveStatus('☁️ Synced')
-      setTimeout(() => setSaveStatus(''), 3000)
-    } catch(e) { setSaveStatus('Sync failed') }
   }
 
   const renderSection = () => {
@@ -845,7 +737,16 @@ export default function App() {
     }
   }
 
-  if (screen === 'home') return <AssessmentsScreen onNew={startNew} onOpen={openSurvey} />
+  // Loading
+  if (session === undefined) return (
+    <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div style={{color:'var(--text2)',fontFamily:'JetBrains Mono',fontSize:13}}>Loading...</div>
+    </div>
+  )
+
+  if (!session) return <AuthScreen />
+
+  if (screen === 'home') return <AssessmentsScreen onNew={()=>setScreen('modeselect')} onOpen={openSurvey} user={session.user} />
   if (screen === 'modeselect') return <ModeSelect onSelect={handleModeSelect} onBack={()=>setScreen('home')} />
   if (screen === 'client') return <ClientQuestionnaire onBack={()=>setScreen('home')} />
 
@@ -860,17 +761,14 @@ export default function App() {
           <span className="header-title">Green Room <span>Energy</span></span>
         </div>
         <div className="header-actions">
-          <span className={`save-indicator ${saveStatus?'saved':''}`}>{saveStatus || '●'}</span>
-          <button className="btn btn-ghost btn-sm" onClick={saveToDriveNow}>☁️</button>
+          <span style={{fontSize:11,fontFamily:'JetBrains Mono',color: saveStatus.includes('✓') ? 'var(--green)' : 'var(--text3)'}}>{saveStatus || '●'}</span>
           <button className="btn btn-secondary btn-sm" onClick={()=>setScreen('home')}>← Home</button>
           <button className="btn btn-primary btn-sm" onClick={()=>setShowExport(true)}>Export</button>
         </div>
       </div>
       <div className="app">
         <nav className="section-nav">
-          {SECTIONS.map((s,i) => (
-            <button key={s} className={`nav-btn ${section===i?'active':''}`} onClick={()=>setSection(i)}>{s}</button>
-          ))}
+          {SECTIONS.map((s,i) => <button key={s} className={`nav-btn ${section===i?'active':''}`} onClick={()=>setSection(i)}>{s}</button>)}
         </nav>
         {renderSection()}
         <div style={{display:'flex',justifyContent:'space-between',marginTop:24,gap:8}}>
