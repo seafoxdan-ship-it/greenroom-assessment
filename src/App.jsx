@@ -1,7 +1,7 @@
 import { exportToPDF } from './utils/pdfExport.js'
 import { exportToDocx } from './utils/docxExport.js'
 import { saveToDrive, loadFromDrive, listDriveAssessments } from './utils/driveApi.js'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 const AREAS = ['Inverter','Battery','Solar Array','Generator','Wiring','Distribution','Monitoring','Structure','Other']
 const PRIORITIES = ['Critical','High','Medium','Low']
@@ -17,10 +17,10 @@ const INDEX_KEY = 'gr-survey-index'
 
 function newData() {
   return {
-    site: { name:'', address:'', date:TODAY, preparedBy:'', client:'', phone:'', email:'' },
+    site: { name:'', address:'', date:TODAY, preparedBy:'', client:'', phone:'', email:'', lat:'', lng:'' },
     inverter: { make:'', model:'', kw:'', serial:'', firmware:'' },
     battery: { chemistry:'LiFePO4', make:'', model:'', voltage:'', ah:'', config:'', age:'' },
-    solar: { panels:'', wattage:'', strings:'', kwp:'', orientation:'', age:'', shading:'None' },
+    solar: { panels:'', wattage:'', strings:'', kwp:'', orientation:'', azimuth:'', tilt:'', age:'', shading:'None' },
     generator: { make:'', model:'', kva:'', fuel:'Diesel', hours:'', lastService:'' },
     issues: [],
     photos: [],
@@ -38,19 +38,11 @@ function newData() {
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
-
-function getIndex() {
-  try { return JSON.parse(localStorage.getItem(INDEX_KEY)) || [] } catch { return [] }
-}
+function getIndex() { try { return JSON.parse(localStorage.getItem(INDEX_KEY)) || [] } catch { return [] } }
 function saveIndex(idx) { localStorage.setItem(INDEX_KEY, JSON.stringify(idx)) }
-function loadSurvey(id) {
-  try { return JSON.parse(localStorage.getItem('gr-survey-' + id)) } catch { return null }
-}
+function loadSurvey(id) { try { return JSON.parse(localStorage.getItem('gr-survey-' + id)) } catch { return null } }
 function saveSurvey(id, data) { localStorage.setItem('gr-survey-' + id, JSON.stringify(data)) }
-function deleteSurvey(id) {
-  localStorage.removeItem('gr-survey-' + id)
-  saveIndex(getIndex().filter(s => s.id !== id))
-}
+function deleteSurvey(id) { localStorage.removeItem('gr-survey-' + id); saveIndex(getIndex().filter(s => s.id !== id)) }
 
 function deepSet(obj, path, value) {
   const keys = path.split('.')
@@ -59,6 +51,20 @@ function deepSet(obj, path, value) {
   for (let i = 0; i < keys.length - 1; i++) cur = cur[keys[i]]
   cur[keys[keys.length - 1]] = value
   return result
+}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`)
+    const d = await r.json()
+    return d.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+  } catch { return `${lat.toFixed(5)}, ${lng.toFixed(5)}` }
+}
+
+function degreesToCardinal(deg) {
+  const d = ((deg % 360) + 360) % 360
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']
+  return dirs[Math.round(d / 22.5) % 16]
 }
 
 // ── Shared components ─────────────────────────────────────
@@ -71,9 +77,7 @@ const F = ({ label, path, data, patch, type='text', options, rows }) => {
     <div className="field">
       <label>{label}</label>
       {options ? (
-        <select value={val} onChange={onChange}>
-          {options.map(o => <option key={o}>{o}</option>)}
-        </select>
+        <select value={val} onChange={onChange}>{options.map(o => <option key={o}>{o}</option>)}</select>
       ) : rows ? (
         <textarea rows={rows} value={val} onChange={onChange} />
       ) : (
@@ -83,13 +87,164 @@ const F = ({ label, path, data, patch, type='text', options, rows }) => {
   )
 }
 
-const Badge = ({ priority }) => (
-  <span className={`badge badge-${priority.toLowerCase()}`}>{priority}</span>
-)
+const Badge = ({ priority }) => <span className={`badge badge-${priority.toLowerCase()}`}>{priority}</span>
 const Divider = () => <div className="divider" />
 const Empty = ({ msg }) => <div className="empty">{msg}</div>
 
-// ── Sections ──────────────────────────────────────────────
+// ── GPS Button ────────────────────────────────────────────
+function GPSButton({ onCapture }) {
+  const [status, setStatus] = useState('')
+  const capture = async () => {
+    if (!navigator.geolocation) { setStatus('GPS not available'); return }
+    setStatus('Locating...')
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude: lat, longitude: lng } = pos.coords
+      setStatus('Geocoding...')
+      const address = await reverseGeocode(lat, lng)
+      onCapture({ lat: lat.toFixed(6), lng: lng.toFixed(6), address })
+      setStatus('✓ Captured')
+      setTimeout(() => setStatus(''), 3000)
+    }, () => { setStatus('GPS denied') })
+  }
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4}}>
+      <button className="btn btn-secondary btn-sm" onClick={capture}>📍 Get Location</button>
+      {status && <span style={{fontSize:12,color:'var(--text2)'}}>{status}</span>}
+    </div>
+  )
+}
+
+// ── Compass / Tilt ────────────────────────────────────────
+function CompassCapture({ onCapture }) {
+  const [heading, setHeading] = useState(null)
+  const [enabled, setEnabled] = useState(false)
+  const [locked, setLocked] = useState(false)
+  const [error, setError] = useState('')
+  const headingRef = useRef(null)
+
+  const enable = async () => {
+    setError('')
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const perm = await DeviceOrientationEvent.requestPermission()
+        if (perm !== 'granted') { setError('Permission denied'); return }
+      } catch(e) { setError('Permission error'); return }
+    }
+    setEnabled(true)
+  }
+
+  useEffect(() => {
+    if (!enabled || locked) return
+    const handler = (e) => {
+      const h = e.webkitCompassHeading ?? e.alpha
+      if (h !== null && h !== undefined) {
+        const deg = Math.round(((h % 360) + 360) % 360)
+        headingRef.current = deg
+        setHeading(deg)
+      }
+    }
+    window.addEventListener('deviceorientation', handler, true)
+    return () => window.removeEventListener('deviceorientation', handler, true)
+  }, [enabled, locked])
+
+  const lock = () => {
+    setLocked(true)
+    if (headingRef.current !== null) onCapture(headingRef.current)
+  }
+
+  const reset = () => { setLocked(false); setHeading(null) }
+
+  return (
+    <div style={{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:6,padding:12,marginTop:8}}>
+      <div style={{fontSize:11,fontFamily:'JetBrains Mono',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>Azimuth Capture</div>
+      {!enabled ? (
+        <button className="btn btn-secondary btn-sm" onClick={enable}>🧭 Tap to Enable Compass</button>
+      ) : locked ? (
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:28,fontWeight:700,color:'var(--orange)',fontFamily:'JetBrains Mono'}}>{heading}°</div>
+          <div style={{fontSize:14,color:'var(--text2)'}}>{degreesToCardinal(heading)}</div>
+          <span style={{fontSize:12,color:'var(--green)'}}>✓ Locked</span>
+          <button className="btn btn-ghost btn-sm" onClick={reset}>Reset</button>
+        </div>
+      ) : (
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:28,fontWeight:700,color:'var(--yellow)',fontFamily:'JetBrains Mono',minWidth:60}}>
+            {heading !== null ? `${heading}°` : '---'}
+          </div>
+          <div style={{fontSize:14,color:'var(--text2)',minWidth:40}}>
+            {heading !== null ? degreesToCardinal(heading) : ''}
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={lock} disabled={heading === null}>🔒 Lock</button>
+        </div>
+      )}
+      {error && <div style={{fontSize:12,color:'var(--red)',marginTop:4}}>{error}</div>}
+    </div>
+  )
+}
+
+function TiltCapture({ onCapture }) {
+  const [tilt, setTilt] = useState(null)
+  const [enabled, setEnabled] = useState(false)
+  const [locked, setLocked] = useState(false)
+  const [error, setError] = useState('')
+  const tiltRef = useRef(null)
+
+  const enable = async () => {
+    setError('')
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const perm = await DeviceOrientationEvent.requestPermission()
+        if (perm !== 'granted') { setError('Permission denied'); return }
+      } catch(e) { setError('Permission error'); return }
+    }
+    setEnabled(true)
+  }
+
+  useEffect(() => {
+    if (!enabled || locked) return
+    const handler = (e) => {
+      if (e.beta !== null) {
+        const t = Math.round(Math.abs(e.beta))
+        tiltRef.current = t
+        setTilt(t)
+      }
+    }
+    window.addEventListener('deviceorientation', handler, true)
+    return () => window.removeEventListener('deviceorientation', handler, true)
+  }, [enabled, locked])
+
+  const lock = () => {
+    setLocked(true)
+    if (tiltRef.current !== null) onCapture(tiltRef.current)
+  }
+
+  const reset = () => { setLocked(false); setTilt(null) }
+
+  return (
+    <div style={{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:6,padding:12,marginTop:8}}>
+      <div style={{fontSize:11,fontFamily:'JetBrains Mono',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>Tilt / Pitch Capture</div>
+      {!enabled ? (
+        <button className="btn btn-secondary btn-sm" onClick={enable}>📐 Tap to Enable Tilt Sensor</button>
+      ) : locked ? (
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:28,fontWeight:700,color:'var(--orange)',fontFamily:'JetBrains Mono'}}>{tilt}°</div>
+          <span style={{fontSize:12,color:'var(--green)'}}>✓ Locked</span>
+          <button className="btn btn-ghost btn-sm" onClick={reset}>Reset</button>
+        </div>
+      ) : (
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:28,fontWeight:700,color:'var(--yellow)',fontFamily:'JetBrains Mono',minWidth:60}}>
+            {tilt !== null ? `${tilt}°` : '---'}
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={lock} disabled={tilt === null}>🔒 Lock</button>
+        </div>
+      )}
+      {error && <div style={{fontSize:12,color:'var(--red)',marginTop:4}}>{error}</div>}
+    </div>
+  )
+}
+
+// ── Section: Site Details ─────────────────────────────────
 function SiteDetails({ data, patch }) {
   return (
     <>
@@ -105,12 +260,23 @@ function SiteDetails({ data, patch }) {
         </div>
         <div style={{marginTop:12}}>
           <F label="Address" path="site.address" data={data} patch={patch} />
+          <GPSButton onCapture={({ lat, lng, address }) => {
+            patch('site.lat', lat)
+            patch('site.lng', lng)
+            patch('site.address', address)
+          }} />
+          {data.site.lat && (
+            <div style={{fontSize:11,fontFamily:'JetBrains Mono',color:'var(--text3)',marginTop:4}}>
+              {data.site.lat}, {data.site.lng}
+            </div>
+          )}
         </div>
       </div>
     </>
   )
 }
 
+// ── Section: System Overview ──────────────────────────────
 function SystemOverview({ data, patch }) {
   return (
     <>
@@ -144,9 +310,23 @@ function SystemOverview({ data, patch }) {
           <F label="Panel Wattage (W)" path="solar.wattage" data={data} patch={patch} />
           <F label="No. of Strings" path="solar.strings" data={data} patch={patch} />
           <F label="Total kWp" path="solar.kwp" data={data} patch={patch} />
-          <F label="Orientation" path="solar.orientation" data={data} patch={patch} options={['North','NE','NW','East','West','N/E/W Split','Other']} />
           <F label="Age (years)" path="solar.age" data={data} patch={patch} />
           <F label="Shading" path="solar.shading" data={data} patch={patch} options={['None','Minor','Moderate','Severe']} />
+        </div>
+        <div className="grid-2" style={{marginTop:12}}>
+          <div className="field">
+            <label>Azimuth (°)</label>
+            <input type="number" value={data.solar.azimuth} onChange={e => patch('solar.azimuth', e.target.value)} placeholder="e.g. 0 = North" />
+          </div>
+          <div className="field">
+            <label>Tilt Angle (°)</label>
+            <input type="number" value={data.solar.tilt} onChange={e => patch('solar.tilt', e.target.value)} placeholder="e.g. 20" />
+          </div>
+        </div>
+        <CompassCapture onCapture={val => patch('solar.azimuth', String(val))} />
+        <TiltCapture onCapture={val => patch('solar.tilt', String(val))} />
+        <div style={{marginTop:12}}>
+          <F label="Orientation (nearest cardinal)" path="solar.orientation" data={data} patch={patch} options={['North','NNE','NE','ENE','East','ESE','SE','SSE','South','SSW','SW','WSW','West','WNW','NW','NNW','N/E/W Split','Other']} />
         </div>
       </div>
       <div className="card">
@@ -164,6 +344,7 @@ function SystemOverview({ data, patch }) {
   )
 }
 
+// ── Section: Issues Register ──────────────────────────────
 function IssuesRegister({ data, setData }) {
   const [filter, setFilter] = useState('All')
   const [editId, setEditId] = useState(null)
@@ -250,6 +431,7 @@ function IssuesRegister({ data, setData }) {
   )
 }
 
+// ── Section: Photo Documentation ──────────────────────────
 function PhotoCapture({ data, setData }) {
   const addPhoto = (e) => {
     const files = Array.from(e.target.files)
@@ -290,6 +472,7 @@ function PhotoCapture({ data, setData }) {
   )
 }
 
+// ── Section: Remediation Plan ─────────────────────────────
 function RemediationPlan({ data, patch }) {
   const byPriority = (p) => data.issues.filter(i => i.priority === p)
   const phases = [
@@ -323,6 +506,7 @@ function RemediationPlan({ data, patch }) {
   )
 }
 
+// ── Section: Expected Outcomes ────────────────────────────
 function ExpectedOutcomes({ data, setData }) {
   const update = (i, key, val) => {
     setData(d => { const outcomes = [...d.outcomes]; outcomes[i] = { ...outcomes[i], [key]: val }; return { ...d, outcomes } })
@@ -350,6 +534,7 @@ function ExpectedOutcomes({ data, setData }) {
   )
 }
 
+// ── Section: Dashboard Integration ───────────────────────
 function DashboardIntegration({ data, patch }) {
   return (
     <>
@@ -373,17 +558,17 @@ function ExportModal({ data, onClose }) {
   const [status, setStatus] = useState('')
   const exportPDF = async () => {
     setStatus('Generating PDF...')
-    try {  await exportToPDF(data); setStatus('PDF downloaded!') }
+    try { await exportToPDF(data); setStatus('PDF downloaded!') }
     catch(e) { setStatus('PDF error: ' + e.message) }
   }
   const exportDocx = async () => {
     setStatus('Generating DOCX...')
-    try {  await exportToDocx(data); setStatus('DOCX downloaded!') }
+    try { await exportToDocx(data); setStatus('DOCX downloaded!') }
     catch(e) { setStatus('DOCX error: ' + e.message) }
   }
   const saveDrive = async () => {
     setStatus('Saving to Google Drive...')
-    try {  await saveToDrive(data); setStatus('Saved to Google Drive!') }
+    try { await saveToDrive(data); setStatus('Saved to Google Drive!') }
     catch(e) { setStatus('Drive error: ' + e.message) }
   }
   return (
@@ -419,23 +604,18 @@ function AssessmentsScreen({ onNew, onOpen }) {
 
   useEffect(() => { setSurveys(getIndex()) }, [])
 
-  const handleDelete = (id) => {
-    deleteSurvey(id)
-    setSurveys(getIndex())
-    setConfirmDelete(null)
-  }
+  const handleDelete = (id) => { deleteSurvey(id); setSurveys(getIndex()); setConfirmDelete(null) }
 
-  const loadFromDrive = async () => {
+  const loadFromDriveAll = async () => {
     setDriveStatus('Connecting to Drive...')
     try {
-      const loadFile = loadFromDrive
       const files = await listDriveAssessments()
       if (files.length === 0) { setDriveStatus('No assessments found on Drive'); return }
       let imported = 0
       for (const file of files) {
         const existing = getIndex().find(s => s.driveId === file.id)
         if (!existing) {
-          const data = await loadFile(file.id)
+          const data = await loadFromDrive(file.id)
           const id = uid()
           const meta = { id, name: data.site?.name || file.name, date: data.site?.date || TODAY, lastModified: file.modifiedTime, driveId: file.id, synced: true }
           saveSurvey(id, data)
@@ -459,51 +639,42 @@ function AssessmentsScreen({ onNew, onOpen }) {
           <span className="header-title">Green Room <span>Energy</span></span>
         </div>
         <div className="header-actions">
-          <button className="btn btn-ghost btn-sm" onClick={loadFromDrive}>☁️ Load from Drive</button>
+          <button className="btn btn-ghost btn-sm" onClick={loadFromDriveAll}>☁️ Load from Drive</button>
           <button className="btn btn-primary btn-sm" onClick={onNew}>+ New</button>
         </div>
       </div>
-
       <div className="app" style={{paddingTop:8}}>
         <h2 className="section-heading">📋 My Assessments</h2>
         {driveStatus && <div style={{marginBottom:12,fontSize:13,color:'var(--green)',padding:'8px 12px',background:'var(--surface)',borderRadius:6}}>{driveStatus}</div>}
-
         {surveys.length === 0 ? (
           <div className="card" style={{textAlign:'center',padding:48}}>
             <div style={{fontSize:48,marginBottom:16}}>📋</div>
             <div style={{fontSize:18,fontFamily:'Barlow Condensed',fontWeight:700,marginBottom:8}}>No assessments yet</div>
-            <div style={{color:'var(--text2)',marginBottom:24}}>Start a new site assessment or load existing ones from Google Drive</div>
+            <div style={{color:'var(--text2)',marginBottom:24}}>Start a new site assessment or load from Google Drive</div>
             <button className="btn btn-primary" onClick={onNew}>+ New Assessment</button>
           </div>
-        ) : (
-          surveys.slice().reverse().map(survey => (
-            <div key={survey.id} className="card" style={{cursor:'pointer',borderColor: survey.synced ? 'var(--green-dim)' : 'var(--border)'}}
-              onClick={() => onOpen(survey.id)}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-                <div style={{flex:1}}>
-                  <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>
-                    {survey.name || 'Unnamed Assessment'}
-                  </div>
-                  <div style={{fontSize:12,color:'var(--text2)',fontFamily:'JetBrains Mono'}}>
-                    {survey.date} · {survey.issueCount || 0} issues
-                    {survey.synced && <span style={{color:'var(--green)',marginLeft:8}}>✓ Drive</span>}
-                  </div>
-                </div>
-                <div style={{display:'flex',gap:6}} onClick={e=>e.stopPropagation()}>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>onOpen(survey.id)}>Open</button>
-                  {confirmDelete === survey.id ? (
-                    <>
-                      <button className="btn btn-danger btn-sm" onClick={()=>handleDelete(survey.id)}>Confirm</button>
-                      <button className="btn btn-ghost btn-sm" onClick={()=>setConfirmDelete(null)}>Cancel</button>
-                    </>
-                  ) : (
-                    <button className="btn btn-danger btn-sm" onClick={()=>setConfirmDelete(survey.id)}>Delete</button>
-                  )}
+        ) : surveys.slice().reverse().map(survey => (
+          <div key={survey.id} className="card" style={{cursor:'pointer',borderColor: survey.synced ? 'var(--green-dim)' : 'var(--border)'}} onClick={() => onOpen(survey.id)}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>{survey.name || 'Unnamed Assessment'}</div>
+                <div style={{fontSize:12,color:'var(--text2)',fontFamily:'JetBrains Mono'}}>
+                  {survey.date} · {survey.issueCount || 0} issues
+                  {survey.synced && <span style={{color:'var(--green)',marginLeft:8}}>✓ Drive</span>}
                 </div>
               </div>
+              <div style={{display:'flex',gap:6}} onClick={e=>e.stopPropagation()}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>onOpen(survey.id)}>Open</button>
+                {confirmDelete === survey.id ? (
+                  <><button className="btn btn-danger btn-sm" onClick={()=>handleDelete(survey.id)}>Confirm</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setConfirmDelete(null)}>Cancel</button></>
+                ) : (
+                  <button className="btn btn-danger btn-sm" onClick={()=>setConfirmDelete(survey.id)}>Delete</button>
+                )}
+              </div>
             </div>
-          ))
-        )}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -523,14 +694,10 @@ function ModeSelect({ onSelect, onBack }) {
       </div>
       <div className="mode-cards">
         <div className="mode-card" onClick={()=>onSelect('tech')}>
-          <div className="icon">🔧</div>
-          <h2>Technician</h2>
-          <p>Full site assessment & documentation</p>
+          <div className="icon">🔧</div><h2>Technician</h2><p>Full site assessment & documentation</p>
         </div>
         <div className="mode-card" onClick={()=>onSelect('client')}>
-          <div className="icon">🌿</div>
-          <h2>Client</h2>
-          <p>Quick enquiry & pain point survey</p>
+          <div className="icon">🌿</div><h2>Client</h2><p>Quick enquiry & pain point survey</p>
         </div>
       </div>
       <button className="btn btn-ghost btn-sm" style={{marginTop:16}} onClick={onBack}>← Back</button>
@@ -602,19 +769,17 @@ function ClientQuestionnaire({ onBack }) {
 
 // ── Main App ──────────────────────────────────────────────
 export default function App() {
-  const [screen, setScreen] = useState('home') // home | modeselect | tech | client
+  const [screen, setScreen] = useState('home')
   const [activeSurveyId, setActiveSurveyId] = useState(null)
   const [section, setSection] = useState(0)
   const [data, setData] = useState(newData())
   const [showExport, setShowExport] = useState(false)
   const [saveStatus, setSaveStatus] = useState('')
 
-  // Auto-save
   useEffect(() => {
     if (screen !== 'tech' || !activeSurveyId) return
     const timer = setTimeout(() => {
       saveSurvey(activeSurveyId, data)
-      // Update index metadata
       const idx = getIndex()
       const existing = idx.find(s => s.id === activeSurveyId)
       if (existing) {
@@ -649,10 +814,7 @@ export default function App() {
       const meta = { id, name: 'Unnamed Assessment', date: TODAY, issueCount: 0, lastModified: new Date().toISOString(), synced: false }
       saveSurvey(id, d)
       saveIndex([...getIndex(), meta])
-      setData(d)
-      setActiveSurveyId(id)
-      setSection(0)
-      setScreen('tech')
+      setData(d); setActiveSurveyId(id); setSection(0); setScreen('tech')
     } else {
       setScreen('client')
     }
@@ -661,7 +823,6 @@ export default function App() {
   const saveToDriveNow = async () => {
     setSaveStatus('Syncing...')
     try {
-      const { saveToDrive } = await import('./utils/driveApi.js')
       const fileId = await saveToDrive(data)
       const idx = getIndex()
       const s = idx.find(x => x.id === activeSurveyId)
@@ -705,7 +866,6 @@ export default function App() {
           <button className="btn btn-primary btn-sm" onClick={()=>setShowExport(true)}>Export</button>
         </div>
       </div>
-
       <div className="app">
         <nav className="section-nav">
           {SECTIONS.map((s,i) => (
@@ -718,7 +878,6 @@ export default function App() {
           {section < SECTIONS.length-1 && <button className="btn btn-primary" style={{marginLeft:'auto'}} onClick={()=>setSection(s=>s+1)}>Next →</button>}
         </div>
       </div>
-
       {showExport && <ExportModal data={data} onClose={()=>setShowExport(false)} />}
     </>
   )
