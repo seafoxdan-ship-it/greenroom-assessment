@@ -1,3 +1,6 @@
+import { exportToPDF } from './utils/pdfExport.js'
+import { exportToDocx } from './utils/docxExport.js'
+import { saveToDrive, loadFromDrive, listDriveAssessments } from './utils/driveApi.js'
 import { useState, useEffect, useCallback } from 'react'
 
 const AREAS = ['Inverter','Battery','Solar Array','Generator','Wiring','Distribution','Monitoring','Structure','Other']
@@ -370,17 +373,17 @@ function ExportModal({ data, onClose }) {
   const [status, setStatus] = useState('')
   const exportPDF = async () => {
     setStatus('Generating PDF...')
-    try { const { exportToPDF } = await import('./utils/pdfExport.js'); await exportToPDF(data); setStatus('PDF downloaded!') }
+    try {  await exportToPDF(data); setStatus('PDF downloaded!') }
     catch(e) { setStatus('PDF error: ' + e.message) }
   }
   const exportDocx = async () => {
     setStatus('Generating DOCX...')
-    try { const { exportToDocx } = await import('./utils/docxExport.js'); await exportToDocx(data); setStatus('DOCX downloaded!') }
+    try {  await exportToDocx(data); setStatus('DOCX downloaded!') }
     catch(e) { setStatus('DOCX error: ' + e.message) }
   }
   const saveDrive = async () => {
     setStatus('Saving to Google Drive...')
-    try { const { saveToDrive } = await import('./utils/driveApi.js'); await saveToDrive(data); setStatus('Saved to Google Drive!') }
+    try {  await saveToDrive(data); setStatus('Saved to Google Drive!') }
     catch(e) { setStatus('Drive error: ' + e.message) }
   }
   return (
@@ -425,7 +428,7 @@ function AssessmentsScreen({ onNew, onOpen }) {
   const loadFromDrive = async () => {
     setDriveStatus('Connecting to Drive...')
     try {
-      const { listDriveAssessments, loadFromDrive: loadFile } = await import('./utils/driveApi.js')
+      const loadFile = loadFromDrive
       const files = await listDriveAssessments()
       if (files.length === 0) { setDriveStatus('No assessments found on Drive'); return }
       let imported = 0
