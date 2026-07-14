@@ -1,6 +1,6 @@
 import { exportToPDF } from './utils/pdfExport.js'
 import { exportToDocx } from './utils/docxExport.js'
-import { listSurveys, getSurvey, saveSurveyCloud, deleteSurveyCloud, signOut, onAuthChange, getSession, listAllSurveys } from './utils/surveyService.js'
+import { listSurveys, getSurvey, saveSurveyCloud, deleteSurveyCloud, signOut, onAuthChange, getSession, listAllSurveys, saveClientSubmission, listClientSubmissions } from './utils/surveyService.js'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AuthScreen from './AuthScreen.jsx'
 
@@ -528,11 +528,18 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
   const [loading, setLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [adminMode, setAdminMode] = useState(false)
+  const [adminTab, setAdminTab] = useState('surveys')
+  const [clientSubs, setClientSubs] = useState([])
   const admin = user?.email === 'seafoxdan@gmail.com'
 
   const load = async () => {
     setLoading(true)
     try {
+      if (adminMode && admin && adminTab === 'clients') {
+        setClientSubs(await listClientSubmissions())
+        setLoading(false)
+        return
+      }
       if (adminMode && admin) {
         // admin
         setSurveys(await listAllSurveys())
@@ -543,7 +550,7 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [adminMode])
+  useEffect(() => { load() }, [adminMode, adminTab])
 
   const handleDelete = async (id) => {
     try { await deleteSurveyCloud(id); await load() } catch(e) { alert('Delete failed: ' + e.message) }
@@ -574,7 +581,26 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
         </div>
       </div>
       <div className="app" style={{paddingTop:8}}>
-        <h2 className="section-heading">{adminMode ? '👁 All Assessments' : '📋 My Assessments'}</h2>
+        <h2 className="section-heading">{adminMode ? '👁 Admin' : '📋 My Assessments'}</h2>
+        {adminMode && (
+          <div style={{display:'flex',gap:8,marginBottom:16}}>
+            <button className={`btn btn-sm ${adminTab==='surveys'?'btn-primary':'btn-ghost'}`} onClick={()=>setAdminTab('surveys')}>Assessments</button>
+            <button className={`btn btn-sm ${adminTab==='clients'?'btn-primary':'btn-ghost'}`} onClick={()=>setAdminTab('clients')}>Client Enquiries</button>
+          </div>
+        )}
+        {adminMode && adminTab === 'clients' && (
+          <div>
+            {clientSubs.length === 0 ? <Empty msg="No client submissions yet" /> : clientSubs.map(s => (
+              <div key={s.id} className="card">
+                <div style={{fontFamily:'Barlow Condensed',fontSize:18,fontWeight:700,marginBottom:4}}>{s.name} — {s.phone}</div>
+                <div style={{fontSize:12,color:'var(--text2)',fontFamily:'JetBrains Mono',marginBottom:8}}>{new Date(s.created_at).toLocaleDateString()} · {s.location || 'No location'} · {s.email || 'No email'}</div>
+                {s.pain_points?.length > 0 && <div style={{fontSize:13,color:'var(--text2)',marginBottom:4}}>Issues: {s.pain_points.join(', ')}</div>}
+                {s.generator_hrs && <div style={{fontSize:13}}>Generator: {s.generator_hrs} hrs/day · Fuel: ${s.fuel_cost}/month</div>}
+                {s.notes && <div style={{fontSize:13,color:'var(--text2)',marginTop:4}}>{s.notes}</div>}
+              </div>
+            ))}
+          </div>
+        )}
         {loading ? (
           <div className="empty">Loading...</div>
         ) : surveys.length === 0 ? (
@@ -584,7 +610,7 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
             <div style={{color:'var(--text2)',marginBottom:24}}>Start your first site assessment</div>
             <button className="btn btn-primary" onClick={onNew}>+ New Assessment</button>
           </div>
-        ) : surveys.map(survey => (
+        ) : adminMode && adminTab === 'clients' ? null : surveys.map(survey => (
           <div key={survey.id} className="card" style={{cursor:'pointer'}} onClick={() => onOpen(survey.id)}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{flex:1}}>
@@ -637,7 +663,11 @@ function ClientQuestionnaire({ onBack }) {
   const [form, setForm] = useState({ painPoints:[], generatorHrs:'', fuelCost:'', systemAge:'', location:'', name:'', phone:'', email:'', notes:'' })
   const [submitted, setSubmitted] = useState(false)
   const togglePain = (p) => setForm(f => ({ ...f, painPoints: f.painPoints.includes(p) ? f.painPoints.filter(x=>x!==p) : [...f.painPoints, p] }))
-  const submit = () => { if (!form.name || !form.phone) { alert('Please enter your name and phone number'); return }; setSubmitted(true) }
+  const submit = async () => {
+    if (!form.name || !form.phone) { alert('Please enter your name and phone number'); return }
+    try { await saveClientSubmission(form) } catch(e) { console.error('Submission save failed:', e) }
+    setSubmitted(true)
+  }
   if (submitted) return (
     <div className="mode-screen">
       <div className="mode-logo">

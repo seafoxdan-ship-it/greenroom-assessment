@@ -91,3 +91,28 @@ export async function listAllSurveys() {
   if (error) throw error
   return data
 }
+
+// ── Client Submissions ────────────────────────────────────
+export async function saveClientSubmission(form) {
+  const { error } = await supabase.from('client_submissions').insert({
+    name: form.name,
+    phone: form.phone,
+    email: form.email,
+    location: form.location,
+    pain_points: form.painPoints,
+    generator_hrs: form.generatorHrs,
+    fuel_cost: form.fuelCost,
+    system_age: form.systemAge,
+    notes: form.notes,
+  })
+  if (error) throw error
+}
+
+export async function listClientSubmissions() {
+  const { data, error } = await supabase
+    .from('client_submissions')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data
+}
