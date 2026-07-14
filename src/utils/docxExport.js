@@ -1,4 +1,5 @@
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, WidthType, BorderStyle } from 'docx'
+import { TableLayoutType } from 'docx'
 import { saveAs } from 'file-saver'
 
 // A4 minus margins = 10440 twips. Label=3000, Value=7440
@@ -35,7 +36,7 @@ const hdrCell = (text) => new TableCell({
 function twoCol(rows) {
   return new Table({
     width: { size: 10440, type: WidthType.DXA },
-    rows: rows.map(([l, v]) => new TableRow({ children: [cell(l, true), cell(v)] }))
+    layout: TableLayoutType.FIXED, rows: rows.map(([l, v]) => new TableRow({ children: [cell(l, true), cell(v)] }))
   })
 }
 
