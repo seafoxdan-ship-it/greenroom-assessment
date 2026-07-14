@@ -1,6 +1,6 @@
 import { exportToPDF } from './utils/pdfExport.js'
 import { exportToDocx } from './utils/docxExport.js'
-import { listSurveys, getSurvey, saveSurveyCloud, deleteSurveyCloud, signOut, onAuthChange, getSession } from './utils/surveyService.js'
+import { listSurveys, getSurvey, saveSurveyCloud, deleteSurveyCloud, signOut, onAuthChange, getSession, listAllSurveys } from './utils/surveyService.js'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AuthScreen from './AuthScreen.jsx'
 
@@ -534,7 +534,7 @@ function AssessmentsScreen({ onNew, onOpen, user }) {
     setLoading(true)
     try {
       if (adminMode && admin) {
-        const { listAllSurveys } = await import('./utils/surveyService.js')
+        // admin
         setSurveys(await listAllSurveys())
       } else {
         setSurveys(await listSurveys())
