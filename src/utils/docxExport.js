@@ -1,122 +1,69 @@
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, WidthType, BorderStyle } from 'docx'
-import { TableLayoutType } from 'docx'
+import { Document, Packer, Paragraph, TextRun, WidthType, BorderStyle, AlignmentType } from 'docx'
 import { saveAs } from 'file-saver'
 
-// A4 minus margins = 10440 twips. Label=3000, Value=7440
-const COL1 = 3000
-const COL2 = 7440
-const b = { style: BorderStyle.SINGLE, size: 4, color: 'DDDDDD' }
-const allB = { top: b, bottom: b, left: b, right: b }
+const font = 'Calibri'
 
-const cell = (text, isLabel = false, extra = {}) => new TableCell({
-  width: { size: isLabel ? COL1 : COL2, type: WidthType.DXA },
-  borders: allB,
-  shading: isLabel ? { fill: 'F5F5F5' } : { fill: 'FFFFFF' },
-  margins: { top: 100, bottom: 100, left: 150, right: 150 },
-  children: [new Paragraph({
-    children: [new TextRun({
-      text: String(text || '—'),
-      size: isLabel ? 18 : 20,
-      font: 'Calibri',
-      bold: isLabel,
-      color: isLabel ? '666666' : '222222',
-      ...extra,
-    })]
-  })]
+const h1 = (text) => new Paragraph({
+  children: [new TextRun({ text, bold: true, size: 36, color: 'FF6B1A', font })],
+  spacing: { before: 400, after: 160 },
+  border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: 'FF6B1A' } },
 })
 
-const hdrCell = (text) => new TableCell({
-  width: { size: [COL1, COL2, COL2, COL2, COL2][0] || 2088, type: WidthType.DXA },
-  borders: allB,
-  shading: { fill: 'FF6B1A' },
-  margins: { top: 100, bottom: 100, left: 150, right: 150 },
-  children: [new Paragraph({ children: [new TextRun({ text, size: 18, font: 'Calibri', bold: true, color: 'FFFFFF' })] })]
+const h2 = (text) => new Paragraph({
+  children: [new TextRun({ text, bold: true, size: 26, color: '333333', font })],
+  spacing: { before: 280, after: 100 },
 })
 
-function twoCol(rows) {
-  return new Table({
-    width: { size: 10440, type: WidthType.DXA },
-    layout: TableLayoutType.FIXED, rows: rows.map(([l, v]) => new TableRow({ children: [cell(l, true), cell(v)] }))
-  })
-}
+const row = (label, value) => new Paragraph({
+  children: [
+    new TextRun({ text: `${label}:  `, bold: true, size: 20, color: '555555', font }),
+    new TextRun({ text: String(value || '—'), size: 20, color: '111111', font }),
+  ],
+  spacing: { after: 80 },
+})
 
-function heading(text) {
-  return new Paragraph({
-    children: [new TextRun({ text, bold: true, size: 32, color: 'FF6B1A', font: 'Calibri' })],
-    spacing: { before: 400, after: 160 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'FF6B1A' } },
-  })
-}
+const blank = () => new Paragraph({ children: [new TextRun({ text: '' })], spacing: { after: 80 } })
 
-function subheading(text) {
-  return new Paragraph({
-    children: [new TextRun({ text, bold: true, size: 24, color: '333333', font: 'Calibri' })],
-    spacing: { before: 240, after: 100 },
-  })
-}
+const bullet = (text, color = '222222') => new Paragraph({
+  children: [new TextRun({ text, size: 19, color, font })],
+  bullet: { level: 0 },
+  spacing: { after: 60 },
+})
 
-function para(text, opts = {}) {
-  return new Paragraph({
-    children: [new TextRun({ text: String(text || ''), size: 20, font: 'Calibri', ...opts })],
-    spacing: { after: 80 },
-  })
-}
+const subbullet = (text, color = '666666') => new Paragraph({
+  children: [new TextRun({ text, size: 18, color, font })],
+  bullet: { level: 1 },
+  spacing: { after: 60 },
+})
 
-function priorityColor(p) {
+const priorityColor = (p) => {
   if (p === 'Critical') return 'CC0000'
   if (p === 'High') return 'DD5500'
   if (p === 'Medium') return '997700'
-  return '0055AA'
+  return '005599'
 }
 
-function issuesTable(issues) {
-  const W = [1200, 1200, 1600, 3720, 2720]
-  const headers = ['ID', 'Priority', 'Area', 'Description', 'Fix']
-  const hRow = new TableRow({
-    children: headers.map((h, i) => new TableCell({
-      width: { size: W[i], type: WidthType.DXA },
-      borders: allB,
+function outcomeRows(outcomes) {
+  const rows = [
+    new Paragraph({
+      children: [
+        new TextRun({ text: 'Metric', bold: true, size: 20, color: 'FFFFFF', font }),
+        new TextRun({ text: '          Current', bold: true, size: 20, color: 'FFFFFF', font }),
+        new TextRun({ text: '          Proposed', bold: true, size: 20, color: 'FFFFFF', font }),
+      ],
+      spacing: { after: 80 },
       shading: { fill: 'FF6B1A' },
-      margins: { top: 80, bottom: 80, left: 120, right: 120 },
-      children: [new Paragraph({ children: [new TextRun({ text: h, size: 18, font: 'Calibri', bold: true, color: 'FFFFFF' })] })]
+    }),
+    ...outcomes.map(o => new Paragraph({
+      children: [
+        new TextRun({ text: (o.metric || '—').padEnd(28), size: 19, font }),
+        new TextRun({ text: (o.current || '—').padEnd(20), size: 19, font }),
+        new TextRun({ text: o.proposed || '—', size: 19, bold: true, color: '1a7a52', font }),
+      ],
+      spacing: { after: 60 },
     }))
-  })
-  const dRows = issues.map(iss => new TableRow({
-    children: [iss.id, iss.priority, iss.area, iss.description, iss.fix || '—'].map((v, i) =>
-      new TableCell({
-        width: { size: W[i], type: WidthType.DXA },
-        borders: allB,
-        margins: { top: 80, bottom: 80, left: 120, right: 120 },
-        children: [new Paragraph({ children: [new TextRun({
-          text: String(v || '—'), size: 18, font: 'Calibri',
-          color: i === 1 ? priorityColor(iss.priority) : '222222',
-          bold: i === 1,
-        })] })]
-      })
-    )
-  }))
-  return new Table({ width: { size: 10440, type: WidthType.DXA }, rows: [hRow, ...dRows] })
-}
-
-function outcomesTable(outcomes) {
-  const W = [4000, 3220, 3220]
-  const hRow = new TableRow({
-    children: ['Metric', 'Current', 'Proposed'].map((h, i) => new TableCell({
-      width: { size: W[i], type: WidthType.DXA },
-      borders: allB,
-      shading: { fill: 'FF6B1A' },
-      margins: { top: 80, bottom: 80, left: 120, right: 120 },
-      children: [new Paragraph({ children: [new TextRun({ text: h, size: 18, font: 'Calibri', bold: true, color: 'FFFFFF' })] })]
-    }))
-  })
-  const dRows = outcomes.map(o => new TableRow({
-    children: [
-      new TableCell({ width: { size: W[0], type: WidthType.DXA }, borders: allB, margins: { top: 80, bottom: 80, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.metric || '—', size: 18, font: 'Calibri' })] })] }),
-      new TableCell({ width: { size: W[1], type: WidthType.DXA }, borders: allB, margins: { top: 80, bottom: 80, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.current || '—', size: 18, font: 'Calibri' })] })] }),
-      new TableCell({ width: { size: W[2], type: WidthType.DXA }, borders: allB, shading: { fill: 'EAFAF3' }, margins: { top: 80, bottom: 80, left: 120, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: o.proposed || '—', size: 18, font: 'Calibri', bold: true, color: '1a7a52' })] })] }),
-    ]
-  }))
-  return new Table({ width: { size: 10440, type: WidthType.DXA }, rows: [hRow, ...dRows] })
+  ]
+  return rows
 }
 
 export async function exportToDocx(data) {
@@ -124,87 +71,129 @@ export async function exportToDocx(data) {
 
   // Cover
   ch.push(
-    new Paragraph({ children: [new TextRun({ text: 'GREEN ROOM ENERGY', bold: true, size: 64, color: 'FF6B1A', font: 'Calibri' })], spacing: { after: 100 } }),
-    new Paragraph({ children: [new TextRun({ text: 'Off-Grid Solar Site Assessment Report', size: 28, color: '888888', font: 'Calibri' })], spacing: { after: 500 } }),
+    new Paragraph({ children: [new TextRun({ text: 'GREEN ROOM ENERGY', bold: true, size: 72, color: 'FF6B1A', font })], spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: 'Off-Grid Solar Site Assessment Report', size: 28, color: '888888', font })], spacing: { after: 600 } }),
   )
 
-  ch.push(heading('Site Details'))
-  ch.push(twoCol([
-    ['Site / Property', data.site.name],
-    ['Address', data.site.address],
-    ['Date', data.site.date],
-    ['Prepared By', data.site.preparedBy],
-    ['Client', data.site.client],
-    ['Phone', data.site.phone],
-    ['Email', data.site.email],
-  ]))
+  // Site Details
+  ch.push(h1('Site Details'))
+  ch.push(row('Site / Property', data.site.name))
+  ch.push(row('Address', data.site.address))
+  if (data.site.lat) ch.push(row('GPS Coordinates', `${data.site.lat}, ${data.site.lng}`))
+  ch.push(row('Date', data.site.date))
+  ch.push(row('Prepared By', data.site.preparedBy))
+  ch.push(row('Client', data.site.client))
+  ch.push(row('Phone', data.site.phone))
+  ch.push(row('Email', data.site.email))
 
-  ch.push(heading('System Overview'))
-  ch.push(subheading('Inverter / Charger'))
-  ch.push(twoCol([
-    ['Make', data.inverter.make], ['Model', data.inverter.model],
-    ['Rated kW', data.inverter.kw], ['Serial No.', data.inverter.serial],
-    ['Firmware', data.inverter.firmware],
-  ]))
-  ch.push(subheading('Battery Bank'))
-  ch.push(twoCol([
-    ['Chemistry', data.battery.chemistry], ['Make', data.battery.make],
-    ['Model', data.battery.model], ['Voltage', data.battery.voltage ? data.battery.voltage+'V' : ''],
-    ['Capacity', data.battery.ah ? data.battery.ah+'Ah' : ''], ['Configuration', data.battery.config],
-    ['Age', data.battery.age ? data.battery.age+' years' : ''],
-  ]))
-  ch.push(subheading('Solar Array'))
-  ch.push(twoCol([
-    ['No. of Panels', data.solar.panels], ['Panel Wattage', data.solar.wattage ? data.solar.wattage+'W' : ''],
-    ['No. of Strings', data.solar.strings], ['Total kWp', data.solar.kwp],
-    ['Orientation', data.solar.orientation], ['Age', data.solar.age ? data.solar.age+' years' : ''],
-    ['Shading', data.solar.shading],
-  ]))
-  ch.push(subheading('Generator'))
-  ch.push(twoCol([
-    ['Make', data.generator.make], ['Model', data.generator.model],
-    ['Rated kVA', data.generator.kva], ['Fuel Type', data.generator.fuel],
-    ['Hours on Meter', data.generator.hours], ['Last Service', data.generator.lastService],
-  ]))
+  // System Overview
+  ch.push(h1('System Overview'))
 
-  ch.push(heading('Issues Register'))
+  ch.push(h2('Inverter / Charger'))
+  ch.push(row('Make', data.inverter.make))
+  ch.push(row('Model', data.inverter.model))
+  ch.push(row('Rated kW', data.inverter.kw))
+  ch.push(row('Serial No.', data.inverter.serial))
+  ch.push(row('Firmware', data.inverter.firmware))
+  ch.push(blank())
+
+  ch.push(h2('Battery Bank'))
+  ch.push(row('Chemistry', data.battery.chemistry))
+  ch.push(row('Make', data.battery.make))
+  ch.push(row('Model', data.battery.model))
+  ch.push(row('Voltage', data.battery.voltage ? data.battery.voltage + 'V' : ''))
+  ch.push(row('Capacity', data.battery.ah ? data.battery.ah + 'Ah' : ''))
+  ch.push(row('Configuration', data.battery.config))
+  ch.push(row('Age', data.battery.age ? data.battery.age + ' years' : ''))
+  ch.push(blank())
+
+  ch.push(h2('Solar Array'))
+  ch.push(row('No. of Panels', data.solar.panels))
+  ch.push(row('Panel Wattage', data.solar.wattage ? data.solar.wattage + 'W' : ''))
+  ch.push(row('No. of Strings', data.solar.strings))
+  ch.push(row('Total kWp', data.solar.kwp))
+  ch.push(row('Orientation', data.solar.orientation))
+  ch.push(row('Azimuth', data.solar.azimuth ? data.solar.azimuth + '°' : ''))
+  ch.push(row('Tilt Angle', data.solar.tilt ? data.solar.tilt + '°' : ''))
+  ch.push(row('Age', data.solar.age ? data.solar.age + ' years' : ''))
+  ch.push(row('Shading', data.solar.shading))
+  ch.push(blank())
+
+  ch.push(h2('Generator'))
+  ch.push(row('Make', data.generator.make))
+  ch.push(row('Model', data.generator.model))
+  ch.push(row('Rated kVA', data.generator.kva))
+  ch.push(row('Fuel Type', data.generator.fuel))
+  ch.push(row('Hours on Meter', data.generator.hours))
+  ch.push(row('Last Service', data.generator.lastService))
+
+  // Issues
+  ch.push(h1('Issues Register'))
   if (data.issues.length === 0) {
-    ch.push(para('No issues recorded.', { color: '999999' }))
+    ch.push(new Paragraph({ children: [new TextRun({ text: 'No issues recorded.', size: 20, color: '999999', font })], spacing: { after: 80 } }))
   } else {
-    ch.push(issuesTable(data.issues))
+    data.issues.forEach(i => {
+      ch.push(new Paragraph({
+        children: [
+          new TextRun({ text: `${i.id}  `, bold: true, size: 20, font }),
+          new TextRun({ text: `[${i.priority}]  `, bold: true, size: 20, color: priorityColor(i.priority), font }),
+          new TextRun({ text: `${i.area}  —  `, size: 20, color: '666666', font }),
+          new TextRun({ text: i.description, size: 20, font }),
+        ],
+        spacing: { before: 120, after: 60 },
+      }))
+      if (i.fix) ch.push(subbullet(`Fix: ${i.fix}`))
+      if (i.grSolution) ch.push(subbullet(`GR Solution: ${i.grSolution}`, '1a7a52'))
+    })
   }
 
-  ch.push(heading('Remediation Plan'))
+  // Remediation Plan
+  ch.push(h1('Remediation Plan'))
   const phases = [
-    { label: 'Phase 1 — Immediate (Critical)', items: data.issues.filter(i=>i.priority==='Critical') },
-    { label: 'Phase 2 — Short Term (High)', items: data.issues.filter(i=>i.priority==='High') },
-    { label: 'Phase 3 — Scheduled (Medium / Low)', items: [...data.issues.filter(i=>i.priority==='Medium'), ...data.issues.filter(i=>i.priority==='Low')] },
+    { label: 'Phase 1 — Immediate (Critical)', items: data.issues.filter(i=>i.priority==='Critical'), color: 'CC0000' },
+    { label: 'Phase 2 — Short Term (High)', items: data.issues.filter(i=>i.priority==='High'), color: 'DD5500' },
+    { label: 'Phase 3 — Scheduled (Medium / Low)', items: [...data.issues.filter(i=>i.priority==='Medium'), ...data.issues.filter(i=>i.priority==='Low')], color: '997700' },
   ]
   phases.forEach(phase => {
-    ch.push(subheading(phase.label))
+    ch.push(h2(phase.label))
     if (phase.items.length === 0) {
-      ch.push(para('No issues at this priority level.', { color: '999999' }))
+      ch.push(new Paragraph({ children: [new TextRun({ text: 'No issues at this priority level.', size: 19, color: '999999', font })], spacing: { after: 80 } }))
     } else {
       phase.items.forEach(i => {
-        ch.push(new Paragraph({ children: [new TextRun({ text: `${i.id} — ${i.description}`, size: 20, font: 'Calibri' })], bullet: { level: 0 }, spacing: { after: 60 } }))
-        if (i.fix) ch.push(new Paragraph({ children: [new TextRun({ text: `Fix: ${i.fix}`, size: 18, font: 'Calibri', color: '666666' })], bullet: { level: 1 }, spacing: { after: 60 } }))
-        if (i.grSolution) ch.push(new Paragraph({ children: [new TextRun({ text: `GR Solution: ${i.grSolution}`, size: 18, font: 'Calibri', color: '1a7a52' })], bullet: { level: 1 }, spacing: { after: 60 } }))
+        ch.push(bullet(`${i.id} — ${i.description}`))
+        if (i.fix) ch.push(subbullet(`Fix: ${i.fix}`))
       })
     }
   })
-  if (data.remediation.notes) { ch.push(subheading('Additional Notes')); ch.push(para(data.remediation.notes)) }
-  if (data.remediation.timeline) ch.push(para('Estimated Timeline: ' + data.remediation.timeline, { bold: true }))
+  if (data.remediation.notes) {
+    ch.push(h2('Additional Notes'))
+    ch.push(new Paragraph({ children: [new TextRun({ text: data.remediation.notes, size: 20, font })], spacing: { after: 80 } }))
+  }
+  if (data.remediation.timeline) {
+    ch.push(row('Estimated Timeline', data.remediation.timeline))
+  }
 
-  ch.push(heading('Expected Outcomes'))
-  ch.push(outcomesTable(data.outcomes))
+  // Expected Outcomes
+  ch.push(h1('Expected Outcomes'))
+  ch.push(...outcomeRows(data.outcomes))
 
-  ch.push(heading('Dashboard Integration'))
-  ch.push(twoCol([
-    ['MQTT Broker', data.dashboard.mqtt], ['Remote Access URL', data.dashboard.url],
-    ['Solar Assistant Version', data.dashboard.saVersion], ['ESP32 Nodes', data.dashboard.esp32Nodes],
-    ['Integration Scope', data.dashboard.scope],
-  ]))
-  if (data.dashboard.notes) ch.push(para(data.dashboard.notes))
+  // Dashboard Integration
+  ch.push(h1('Dashboard Integration'))
+  ch.push(row('MQTT Broker', data.dashboard.mqtt))
+  ch.push(row('Remote Access URL', data.dashboard.url))
+  ch.push(row('Solar Assistant Version', data.dashboard.saVersion))
+  ch.push(row('ESP32 Nodes', data.dashboard.esp32Nodes))
+  ch.push(row('Integration Scope', data.dashboard.scope))
+  if (data.dashboard.notes) ch.push(row('Notes', data.dashboard.notes))
+
+  // Photo list (no images in docx - list captions only)
+  if (data.photos.length > 0) {
+    ch.push(h1('Photo Documentation'))
+    ch.push(new Paragraph({ children: [new TextRun({ text: `${data.photos.length} photo(s) captured during assessment:`, size: 20, font })], spacing: { after: 120 } }))
+    data.photos.forEach((p, i) => {
+      ch.push(bullet(`Photo ${i+1}: ${p.caption || 'No caption'} (${p.area})`))
+    })
+  }
 
   const doc = new Document({
     sections: [{
