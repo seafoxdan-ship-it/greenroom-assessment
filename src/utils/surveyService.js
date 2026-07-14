@@ -75,3 +75,19 @@ export async function deleteSurveyCloud(id) {
   const { error } = await supabase.from('surveys').delete().eq('id', id)
   if (error) throw error
 }
+
+// ── Admin ─────────────────────────────────────────────────
+const ADMIN_EMAIL = 'seafoxdan@gmail.com'
+
+export function isAdmin(session) {
+  return session?.user?.email === ADMIN_EMAIL
+}
+
+export async function listAllSurveys() {
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('id, site_name, site_date, issue_count, updated_at, user_id')
+    .order('updated_at', { ascending: false })
+  if (error) throw error
+  return data
+}
