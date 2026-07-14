@@ -5,6 +5,7 @@ export default function AuthScreen() {
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -16,12 +17,10 @@ export default function AuthScreen() {
         await signIn(email, password)
       } else {
         await signUp(email, password)
-        setStatus('Account created! Check your email to confirm, then log in.')
+        setStatus('✓ Account created! Check your email to verify, then log in.')
         setMode('login')
       }
-    } catch(e) {
-      setStatus(e.message)
-    }
+    } catch(e) { setStatus(e.message) }
     setLoading(false)
   }
 
@@ -50,17 +49,32 @@ export default function AuthScreen() {
               placeholder="you@example.com"
               onKeyDown={e=>e.key==='Enter' && submit()} />
           </div>
+
           <div className="field" style={{marginBottom:20}}>
             <label>Password</label>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
-              placeholder="••••••••"
-              onKeyDown={e=>e.key==='Enter' && submit()} />
+            <div style={{position:'relative'}}>
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={password}
+                onChange={e=>setPassword(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={e=>e.key==='Enter' && submit()}
+                style={{paddingRight:44}}
+              />
+              <button
+                onClick={()=>setShowPw(s=>!s)}
+                style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',color:'var(--text2)',fontSize:16,padding:4}}
+              >
+                {showPw ? '🙈' : '👁'}
+              </button>
+            </div>
           </div>
 
           {status && (
             <div style={{marginBottom:12,fontSize:13,padding:'8px 12px',borderRadius:6,
-              background: status.includes('created') ? 'var(--green-dim)' : 'var(--red-dim)',
-              color: status.includes('created') ? 'var(--green)' : 'var(--red)'}}>
+              background: status.includes('✓') ? '#1a7a5220' : 'var(--red-dim)',
+              color: status.includes('✓') ? 'var(--green)' : 'var(--red)',
+              border: `1px solid ${status.includes('✓') ? 'var(--green-dim)' : 'var(--red-dim)'}`}}>
               {status}
             </div>
           )}
@@ -78,6 +92,12 @@ export default function AuthScreen() {
             )}
           </div>
         </div>
+
+        {mode === 'login' && (
+          <div style={{textAlign:'center',marginTop:12,fontSize:12,color:'var(--text3)'}}>
+            After signing up, check your email and click the verification link, then log in here.
+          </div>
+        )}
       </div>
     </div>
   )
